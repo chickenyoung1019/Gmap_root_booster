@@ -1,67 +1,56 @@
-name: Apply .patch on push (robust & secure)
+name: Apply patch from Issue
 
 on:
-  # pushイベントで、パッチファイルが変更されたときのみに実行
-  push:
-    paths:
-      - 'patches/*.patch'
-      
+  issues:
+    types: [opened, edited, labeled]
+  issue_comment:
+    types: [created]
+
 jobs:
   apply-patch:
+    # ラベル apply-patch が付いた Issue/コメントのみ反応
+    if: >
+      (github.event_name == 'issues' &&
+       contains(join(fromJson(toJson(github.event.issue.labels)).*.name), 'apply-patch'))
+      || (github.event_name == 'issue_comment' &&
+          github.event.issue.state == 'open' &&
+          contains(join(fromJson(toJson(github.event.issue.labels)).*.name), 'apply-patch'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
-    
-    # ワークフローを実行するコミットが、ボットによるものでないことを確認
-    # これにより、無限ループを回避します
-    if: github.actor != 'github-actions[bot]'
+      issues: read
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - id: extract
+        uses: actions/github-script@v7
         with:
-          fetch-depth: 0
+          script: |
+            const core = require('@actions/core');
+            const fs = require('fs');
+            const body = context.payload.comment ? context.payload.comment.body : context.payload.issue.body;
+            const m = body && body.match(/```(?:diff|patch)\n([\s\S]*?)```/);
+            if (!m) core.setFailed('No ```diff``` block found.');
+            fs.writeFileSync('incoming.patch', m[1], 'utf8');
+            core.setOutput('branch', `patch/${context.runId}`);
 
-      - name: Pick latest patch file
-        id: pick
-        run: |
-          set -e
-          ls -1t patches/*.patch | head -n1 > PATCH_FILE
-          FILE=$(cat PATCH_FILE)
-          echo "Picked: $FILE"
-          echo "file=$FILE" >> $GITHUB_OUTPUT
-
-      - name: Create branch & apply
-        id: apply
+      - name: Apply patch and push
         run: |
           set -e
           git config user.email "actions@github.com"
-          git config user.name  "github-actions[bot]"
-          BRANCH="patch/${GITHUB_RUN_ID}"
-          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
-          git checkout -b "$BRANCH"
-
-          PATCH="${{ steps.pick.outputs.file }}"
-          echo "Applying $PATCH"
-
-          if git apply -p0 --whitespace=fix "$PATCH"; then
-            echo "Applied with -p0"
-          elif git apply -p1 --whitespace=fix "$PATCH"; then
-            echo "Applied with -p1"
-          else
-            echo "Patch failed"
-            exit 1
-          fi
-
-          git add -A
+          git config user.name "github-actions[bot]"
+          git checkout -b "${{ steps.extract.outputs.branch }}"
+          # リポジトリ直下のパスを想定 (-p0)
+          git apply -p0 --whitespace=fix incoming.patch || (git apply -p0 --reject incoming.patch && echo "::warning::Some hunks failed; .rej files created")
+          git add -A || true
           if git diff --cached --quiet; then
-            echo "No changes to commit (patch had no effect)"
-            exit 1
+            echo "No changes to commit"; exit 0
           fi
-
-          git commit -m "Apply patch: $PATCH"
-          git push --set-upstream origin "$BRANCH"
+          git commit -m "Apply patch from issue #${{ github.event.issue.number }}"
+          git push --set-upstream origin "${{ steps.extract.outputs.branch }}"
 
       - name: Open PR
         uses: actions/github-script@v7
@@ -70,8 +59,8 @@ jobs:
             const [owner, repo] = process.env.GITHUB_REPOSITORY.split('/');
             await github.rest.pulls.create({
               owner, repo,
-              title: 'Apply patch from patches/',
-              head: '${{ steps.apply.outputs.branch }}',
+              title: `Apply patch from issue #${{ github.event.issue.number }}`,
+              head: '${{ steps.extract.outputs.branch }}',
               base: 'main',
-              body: 'Automated PR created from the latest .patch in patches/.'
+              body: 'Automated PR from patch in the issue.'
             });
