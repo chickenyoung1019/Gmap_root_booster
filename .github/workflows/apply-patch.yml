@@ -26,27 +26,20 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Extract patch from issue/comment
+            - name: Extract patch
         id: extract
         run: |
-          set -e
-          BODY_FILE=body.txt
-          if [ "${{ github.event_name }}" = "issue_comment" ]; then
-            printf "%s" "${{ github.event.comment.body }}" > "$BODY_FILE"
-          else
-            printf "%s" "${{ github.event.issue.body }}" > "$BODY_FILE"
-          fi
-          # ```diff ... ``` を抜き出す
-          PATCH_LINES=$(awk '/^```diff/{flag=1;next}/^```/{if(flag){exit}}flag' "$BODY_FILE" | wc -l)
-          if [ "$PATCH_LINES" -eq 0 ]; then
+          printf "%s" "${{ github.event.issue.body }}" > body.txt
+          # 行頭空白許容 / ```diff or ```patch を開始、``` を終了として抽出
+          sed -n '/^[[:space:]]*```\(diff\|patch\)[[:space:]]*$/,/^[[:space:]]*```[[:space:]]*$/p' body.txt \
+            | sed '1d;$d' > incoming.patch
+          if [ ! -s incoming.patch ]; then
             echo "found=0" >> $GITHUB_OUTPUT
-            exit 0
+          else
+            echo "found=1" >> $GITHUB_OUTPUT
           fi
-          awk '/^```diff/{flag=1;next}/^```/{if(flag){exit}}flag' "$BODY_FILE" > incoming.patch
-          echo "found=1" >> $GITHUB_OUTPUT
           echo "branch=patch-${{ github.run_id }}" >> $GITHUB_OUTPUT
-          echo "Extracted patch:"
-          sed -n '1,40p' incoming.patch || true
+
 
       - name: Stop if no patch block
         if: steps.extract.outputs.found != '1'
