@@ -1,10 +1,9 @@
-name: Apply patch from Issue (always run)
+name: Apply .patch on push
 
 on:
-  issues:
-    types: [opened, edited]
-  issue_comment:
-    types: [created]
+  push:
+    paths:
+      - 'patches/*.patch'   # ← patches フォルダ配下に .patch を置いた時だけ動く
 
 jobs:
   apply-patch:
@@ -12,41 +11,47 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-      issues: read
 
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
 
-      id: extract
-        name: Extract patch from body (simple)
+      - name: Find latest patch file in this push
+        id: pick
         run: |
-          echo "${{ github.event.issue.body || github.event.comment.body }}" > raw.txt
-          # フェンス内の diff を抜き出す（なければそのまま）
-          awk '/^```/{flag=!flag;next}flag' raw.txt > incoming.patch
-          if [ ! -s incoming.patch ]; then
-            cp raw.txt incoming.patch
+          set -e
+          # 直近のpushで追加/変更された .patch を拾う
+          git diff --name-only ${{ github.event.before }} ${{ github.sha }} \
+            | grep '^patches/.*\.patch$' | tail -n1 > PATCH_FILE || true
+          if [ ! -s PATCH_FILE ]; then
+            echo "No patch file changed. Exiting."; exit 1
           fi
-          echo "branch=patch/${GITHUB_RUN_ID}" >> $GITHUB_OUTPUT
+          echo "file=$(cat PATCH_FILE)" >> $GITHUB_OUTPUT
+          echo "Picked patch: $(cat PATCH_FILE)"
 
-      - name: Apply patch and push
+      - name: Create branch and apply patch
         run: |
           set -e
           git config user.email "actions@github.com"
           git config user.name "github-actions[bot]"
-          BRANCH="${{ steps.extract.outputs.branch }}"
+          BRANCH="patch/${GITHUB_RUN_ID}"
           git checkout -b "$BRANCH"
-          if git apply -p0 --whitespace=fix incoming.patch; then
-            echo "Patch applied."
+
+          PATCH="${{ steps.pick.outputs.file }}"
+          # まず -p0 でトライ、ダメなら -p1 で .rej を出さずトライ
+          if git apply -p0 --whitespace=fix "$PATCH"; then
+            echo "Applied with -p0"
+          elif git apply -p1 --whitespace=fix "$PATCH"; then
+            echo "Applied with -p1"
           else
-            echo "Some hunks failed; creating .rej files..."
-            git apply -p0 --reject incoming.patch || true
+            echo "Patch failed"; exit 1
           fi
-          git add -A || true
+
+          git add -A
           if git diff --cached --quiet; then
-            echo "No changes to commit"; exit 0
+            echo "No changes to commit"; exit 1
           fi
-          git commit -m "Apply patch from issue/comment"
+          git commit -m "Apply patch: $PATCH"
           git push --set-upstream origin "$BRANCH"
 
       - name: Open PR
@@ -56,8 +61,8 @@ jobs:
             const [owner, repo] = process.env.GITHUB_REPOSITORY.split('/');
             await github.rest.pulls.create({
               owner, repo,
-              title: 'Apply patch from issue/comment',
-              head: '${{ steps.extract.outputs.branch }}',
+              title: 'Apply patch from patches/',
+              head: process.env.BRANCH || 'patch/' + process.env.GITHUB_RUN_ID,
               base: 'main',
-              body: 'Automated PR from patch in the issue/comment.'
+              body: 'Automated PR created from a .patch file in patches/.'
             });
