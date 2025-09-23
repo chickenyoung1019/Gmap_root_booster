@@ -1,4 +1,4 @@
-name: Apply patch from Issue (diagnostic)
+name: Apply patch from Issue (robust)
 
 on:
   issues:
@@ -8,13 +8,13 @@ on:
 
 jobs:
   apply-patch:
-    # ラベル apply-patch が付いているときだけ動く
+    # ラベル apply-patch が付いた Issue（またはそのコメント）のときだけ動く
     if: >
       (github.event_name == 'issues' &&
-       contains(join(fromJson(toJson(github.event.issue.labels)).*.name), 'apply-patch')) ||
-      (github.event_name == 'issue_comment' &&
-       github.event.issue.state == 'open' &&
        contains(join(fromJson(toJson(github.event.issue.labels)).*.name), 'apply-patch'))
+      || (github.event_name == 'issue_comment' &&
+          github.event.issue.state == 'open' &&
+          contains(join(fromJson(toJson(github.event.issue.labels)).*.name), 'apply-patch'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -22,26 +22,46 @@ jobs:
       issues: write
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-            - name: Extract patch
+      - name: Extract patch block (```diff or ```patch)
         id: extract
+        env:
+          BODY_ISSUE: ${{ github.event.issue.body }}
+          BODY_COMMENT: ${{ github.event.comment.body || '' }}
         run: |
-          printf "%s" "${{ github.event.issue.body }}" > body.txt
-          # 行頭空白許容 / ```diff or ```patch を開始、``` を終了として抽出
-          sed -n '/^[[:space:]]*```\(diff\|patch\)[[:space:]]*$/,/^[[:space:]]*```[[:space:]]*$/p' body.txt \
-            | sed '1d;$d' > incoming.patch
-          if [ ! -s incoming.patch ]; then
-            echo "found=0" >> $GITHUB_OUTPUT
+          set -e
+          if [ -n "$BODY_COMMENT" ]; then
+            printf "%s" "$BODY_COMMENT" > body.txt
           else
+            printf "%s" "$BODY_ISSUE" > body.txt
+          fi
+
+          python3 - << 'PY'
+import re, sys, pathlib
+text = pathlib.Path("body.txt").read_text()
+# 行頭の空白許容、```diff / ```patch のどちらでもOK。閉じは ``` 単独行。
+pat = re.compile(r'^[ \t]*```(?:diff|patch)[ \t]*\r?\n(.*?)[ \t]*```[ \t]*$',
+                 re.DOTALL | re.MULTILINE)
+m = pat.search(text)
+if not m:
+    # 見つからなければ空ファイルを作成
+    pathlib.Path("incoming.patch").write_text("")
+    sys.exit(0)
+pathlib.Path("incoming.patch").write_text(m.group(1))
+PY
+
+          if [ -s incoming.patch ]; then
             echo "found=1" >> $GITHUB_OUTPUT
+          else
+            echo "found=0" >> $GITHUB_OUTPUT
           fi
           echo "branch=patch-${{ github.run_id }}" >> $GITHUB_OUTPUT
 
-
-      - name: Stop if no patch block
+      - name: Comment if no patch found
         if: steps.extract.outputs.found != '1'
         uses: actions/github-script@v7
         with:
@@ -50,67 +70,4 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: "⚠️ ` ```diff ` コードブロックが見つかりませんでした。```diff 〜 ``` で囲ってもう一度投稿してください。"
-            });
-
-      - name: Apply patch (tolerant)
-        if: steps.extract.outputs.found == '1'
-        run: |
-          set -e
-          git config user.name "github-actions[bot]"
-          git config user.email "actions@github.com"
-          git checkout -b "${{ steps.extract.outputs.branch }}"
-          # 空白違いなどに寛容に適用、失敗分は .rej に
-          if git apply -p0 --ignore-whitespace --reject incoming.patch; then
-            echo "APPLY_STATUS=ok" >> $GITHUB_ENV
-          else
-            echo "APPLY_STATUS=partial" >> $GITHUB_ENV
-          fi
-          # 何かでも当たっていれば add
-          git add -A || true
-          if git diff --cached --quiet; then
-            echo "CHANGED=0" >> $GITHUB_ENV
-          else
-            echo "CHANGED=1" >> $GITHUB_ENV
-            git commit -m "Apply patch from issue #${{ github.event.issue.number }}"
-            git push --set-upstream origin "${{ steps.extract.outputs.branch }}"
-          fi
-          # .rej の有無も記録
-          REJ_COUNT=$(git ls-files --others --exclude-standard | grep -c '\.rej$' || true)
-          echo "REJ_COUNT=$REJ_COUNT" >> $GITHUB_ENV
-
-      - name: Open PR (only if changed)
-        if: steps.extract.outputs.found == '1' && env.CHANGED == '1'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const {owner, repo} = context.repo;
-            const pr = await github.rest.pulls.create({
-              owner, repo,
-              title: `Apply patch from issue #${{ github.event.issue.number }}`,
-              head: '${{ steps.extract.outputs.branch }}',
-              base: 'main',
-              body: 'Automated PR created from a patch in the issue.'
-            });
-            core.info(`PR: ${pr.data.html_url}`);
-
-      - name: Report result back to Issue
-        if: steps.extract.outputs.found == '1'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const {owner, repo} = context.repo;
-            const number = context.issue.number;
-            const changed = process.env.CHANGED === '1';
-            const rej = Number(process.env.REJ_COUNT||0);
-            const apply = process.env.APPLY_STATUS || 'unknown';
-            let msg = "";
-            if (!changed) {
-              msg = "ℹ️ パッチを適用しましたが、**差分は0行**でした（該当行が見つからない/すでに反映済みの可能性）。\n";
-              if (rej>0) msg += `・.rej ファイル ${rej} 件 → 文脈不一致で当たらなかった塊があります\n`;
-              msg += "確認点：\n- パスが実ファイルと一致しているか（例：`a/index.html`）\n- 先頭の ```diff と末尾の ``` がペアになっているか\n- 余計な全角スペース/スマートクォートが混ざっていないか\n";
-            } else {
-              msg = "✅ 変更を検出し、PRを作成しました。上で確認して **Merge** してください。";
-              if (rej>0) msg += `\n※ ただし .rej ${rej} 件あります（一部のみ適用）。`;
-            }
-            await github.rest.issues.createComment({owner, repo, issue_number: number, body: msg});
+              body: "⚠️ ` ```diff ` または ` ```patch ` のコードブロックが見つかりま
