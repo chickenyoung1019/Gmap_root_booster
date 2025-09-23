@@ -3,7 +3,7 @@ name: Apply .patch on push
 on:
   push:
     paths:
-      - 'patches/*.patch'   # ← patches フォルダ配下に .patch を置いた時だけ動く
+      - 'patches/*.patch'
 
 jobs:
   apply-patch:
@@ -20,25 +20,27 @@ jobs:
         id: pick
         run: |
           set -e
-          # 直近のpushで追加/変更された .patch を拾う
           git diff --name-only ${{ github.event.before }} ${{ github.sha }} \
             | grep '^patches/.*\.patch$' | tail -n1 > PATCH_FILE || true
           if [ ! -s PATCH_FILE ]; then
             echo "No patch file changed. Exiting."; exit 1
           fi
-          echo "file=$(cat PATCH_FILE)" >> $GITHUB_OUTPUT
-          echo "Picked patch: $(cat PATCH_FILE)"
+          FILE=$(cat PATCH_FILE)
+          echo "file=$FILE" >> $GITHUB_OUTPUT
+          echo "Picked patch: $FILE"
 
       - name: Create branch and apply patch
+        id: branch
         run: |
           set -e
           git config user.email "actions@github.com"
           git config user.name "github-actions[bot]"
           BRANCH="patch/${GITHUB_RUN_ID}"
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
           git checkout -b "$BRANCH"
 
           PATCH="${{ steps.pick.outputs.file }}"
-          # まず -p0 でトライ、ダメなら -p1 で .rej を出さずトライ
+          echo "Applying $PATCH"
           if git apply -p0 --whitespace=fix "$PATCH"; then
             echo "Applied with -p0"
           elif git apply -p1 --whitespace=fix "$PATCH"; then
@@ -48,9 +50,6 @@ jobs:
           fi
 
           git add -A
-          if git diff --cached --quiet; then
-            echo "No changes to commit"; exit 1
-          fi
           git commit -m "Apply patch: $PATCH"
           git push --set-upstream origin "$BRANCH"
 
@@ -62,7 +61,7 @@ jobs:
             await github.rest.pulls.create({
               owner, repo,
               title: 'Apply patch from patches/',
-              head: process.env.BRANCH || 'patch/' + process.env.GITHUB_RUN_ID,
+              head: '${{ steps.branch.outputs.branch }}',
               base: 'main',
               body: 'Automated PR created from a .patch file in patches/.'
             });
