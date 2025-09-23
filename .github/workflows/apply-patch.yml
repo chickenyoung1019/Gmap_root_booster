@@ -3,7 +3,7 @@ name: Apply .patch on push (simple & robust)
 on:
   push:
     paths:
-      - 'patches/*.patch'        # patches/ に .patch を置いた push だけ発火
+      - 'patches/*.patch'
 
 jobs:
   apply-patch:
@@ -19,7 +19,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      # 直近の .patch を “リポジトリから” 直接選ぶ（push差分を使わない）
       - name: Pick latest patch file
         id: pick
         run: |
@@ -42,7 +41,6 @@ jobs:
           PATCH="${{ steps.pick.outputs.file }}"
           echo "Applying $PATCH"
 
-          # まず -p0、ダメなら -p1 を試す
           if git apply -p0 --whitespace=fix "$PATCH"; then
             echo "Applied with -p0"
           elif git apply -p1 --whitespace=fix "$PATCH"; then
