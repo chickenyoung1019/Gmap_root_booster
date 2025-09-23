@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Google マップ風ルートプランナー（大田区ジオコーディング最小）</title>
+
+  <!-- Tailwind CDN（既存どおり） -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Leaflet CSS（既存どおり） -->
+  <link rel="stylesheet"
+        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+
+  <!-- 自作CSS -->
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div class="wrapper">
+    <div id="map"></div>
+
+    <!-- ヘッダー（検索バー＋ボタン郡） -->
+    <div class="header">
+      <div class="search-bar">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/>
+        </svg>
+        <input id="searchInput" class="search-input" placeholder="例）大田区蒲田5-13-1 / 池上三丁目（概算地点）"/>
+        <button id="searchBtn" class="header-item" style="color:#1d4ed8">検索</button>
+      </div>
+      <div class="btn-container">
+        <button class="header-item" id="prevPack">前の10件</button>
+        <button class="header-item" id="openPack" style="color:#1d4ed8">Googleマップで開く</button>
+        <button class="header-item" id="nextPack">次の10件</button>
+        <button class="header-item !text-blue-600" id="bulkOpen">一括/コピペ</button>
+        <div class="header-item">午前中</div><div class="header-item">14-16</div>
+        <div class="header-item">16-18</div><div class="header-item">18-20</div><div class="header-item">19-21</div>
+        <button class="header-item danger" id="clearAll">全ピン削除</button>
+
+      </div>
+    </div>
+
+    <!-- 一括/コピペパネル -->
+    <div id="bulkPanel">
+      <div class="row">
+        <button id="extractBtn" class="pill" style="color:#2563eb;font-weight:600">住所を抽出</button>
+        <button id="addBtn" class="pill">一覧へ追加</button>
+        <button id="bulkClose" class="pill">閉じる</button>
+      </div>
+
+      <textarea id="bulkInput" placeholder="複数住所を行ごとに貼り付け（例）
+東京都千代田区丸の内1丁目1-1
+東京都中央区銀座4丁目12-15"></textarea>
+
+      <div class="row">
+        <small>※ ここにコピペしたテキストから住所だけを抽出します。編集して「一覧へ追加」を押してください。</small>
+      </div>
+    </div>
+
+    <!-- 下部リストパネル -->
+    <div class="list-panel">
+      <div class="list-header">
+        <div class="handle-bar"></div>
+        <h2 class="font-bold text-lg mb-2">住所ルートリスト</h2>
+        <p class="text-sm text-gray-500">番号順（ドラッグで並び替え可）</p>
+      </div>
+      <div class="list-content"><div id="poi-list"></div></div>
+    </div>
+  </div>
+
+  <!-- Leaflet JS（既存どおり） -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+  <!-- 自作スクリプト（モジュールとして1本化） -->
+  <script type="module" src="./script.js"></script>
+</body>
+</html>
