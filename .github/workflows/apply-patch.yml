@@ -1,20 +1,19 @@
-name: Apply patch from Issue
+name: Apply patch from Issue (no label needed)
 
 on:
   issues:
-    types: [opened, edited, labeled]
+    types: [opened, edited]
   issue_comment:
     types: [created]
 
 jobs:
   apply-patch:
-    # ラベル apply-patch が付いた Issue/コメントのみ反応
+    # Issue/コメント本文に ```diff or ```patch があれば実行
     if: >
       (github.event_name == 'issues' &&
-       contains(join(fromJson(toJson(github.event.issue.labels)).*.name), 'apply-patch'))
+       (contains(github.event.issue.body, '```diff') || contains(github.event.issue.body, '```patch')))
       || (github.event_name == 'issue_comment' &&
-          github.event.issue.state == 'open' &&
-          contains(join(fromJson(toJson(github.event.issue.labels)).*.name), 'apply-patch'))
+          (contains(github.event.comment.body, '```diff') || contains(github.event.comment.body, '```patch')))
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -26,6 +25,7 @@ jobs:
         with: { fetch-depth: 0 }
 
       - id: extract
+        name: Extract patch from body
         uses: actions/github-script@v7
         with:
           script: |
@@ -33,7 +33,7 @@ jobs:
             const fs = require('fs');
             const body = context.payload.comment ? context.payload.comment.body : context.payload.issue.body;
             const m = body && body.match(/```(?:diff|patch)\n([\s\S]*?)```/);
-            if (!m) core.setFailed('No ```diff``` block found.');
+            if (!m) core.setFailed('No ```diff``` or ```patch``` block found.');
             fs.writeFileSync('incoming.patch', m[1], 'utf8');
             core.setOutput('branch', `patch/${context.runId}`);
 
@@ -42,15 +42,21 @@ jobs:
           set -e
           git config user.email "actions@github.com"
           git config user.name "github-actions[bot]"
-          git checkout -b "${{ steps.extract.outputs.branch }}"
-          # リポジトリ直下のパスを想定 (-p0)
-          git apply -p0 --whitespace=fix incoming.patch || (git apply -p0 --reject incoming.patch && echo "::warning::Some hunks failed; .rej files created")
+          BRANCH="${{ steps.extract.outputs.branch }}"
+          git checkout -b "$BRANCH"
+          # リポジトリ直下パス（-p0）
+          if git apply -p0 --whitespace=fix incoming.patch; then
+            echo "Patch applied."
+          else
+            echo "Some hunks failed; creating .rej files..."
+            git apply -p0 --reject incoming.patch || true
+          fi
           git add -A || true
           if git diff --cached --quiet; then
             echo "No changes to commit"; exit 0
           fi
-          git commit -m "Apply patch from issue #${{ github.event.issue.number }}"
-          git push --set-upstream origin "${{ steps.extract.outputs.branch }}"
+          git commit -m "Apply patch from issue/comment"
+          git push --set-upstream origin "$BRANCH"
 
       - name: Open PR
         uses: actions/github-script@v7
@@ -59,8 +65,8 @@ jobs:
             const [owner, repo] = process.env.GITHUB_REPOSITORY.split('/');
             await github.rest.pulls.create({
               owner, repo,
-              title: `Apply patch from issue #${{ github.event.issue.number }}`,
+              title: 'Apply patch from issue/comment',
               head: '${{ steps.extract.outputs.branch }}',
-              base: 'main',
-              body: 'Automated PR from patch in the issue.'
+              base: 'main',   // ← main 以外ならここを変更
+              body: 'Automated PR from patch in the issue/comment.'
             });
