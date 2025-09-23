@@ -1,9 +1,9 @@
-name: Apply .patch on push
+name: Apply .patch on push (simple & robust)
 
 on:
   push:
     paths:
-      - 'patches/*.patch'
+      - 'patches/*.patch'        # patches/ に .patch を置いた push だけ発火
 
 jobs:
   apply-patch:
@@ -13,43 +13,50 @@ jobs:
       pull-requests: write
 
     steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Find latest patch file in this push
+      # 直近の .patch を “リポジトリから” 直接選ぶ（push差分を使わない）
+      - name: Pick latest patch file
         id: pick
         run: |
           set -e
-          git diff --name-only ${{ github.event.before }} ${{ github.sha }} \
-            | grep '^patches/.*\.patch$' | tail -n1 > PATCH_FILE || true
-          if [ ! -s PATCH_FILE ]; then
-            echo "No patch file changed. Exiting."; exit 1
-          fi
+          ls -1t patches/*.patch | head -n1 > PATCH_FILE
           FILE=$(cat PATCH_FILE)
+          echo "Picked: $FILE"
           echo "file=$FILE" >> $GITHUB_OUTPUT
-          echo "Picked patch: $FILE"
 
-      - name: Create branch and apply patch
-        id: branch
+      - name: Create branch & apply
+        id: apply
         run: |
           set -e
           git config user.email "actions@github.com"
-          git config user.name "github-actions[bot]"
+          git config user.name  "github-actions[bot]"
           BRANCH="patch/${GITHUB_RUN_ID}"
           echo "branch=$BRANCH" >> $GITHUB_OUTPUT
           git checkout -b "$BRANCH"
 
           PATCH="${{ steps.pick.outputs.file }}"
           echo "Applying $PATCH"
+
+          # まず -p0、ダメなら -p1 を試す
           if git apply -p0 --whitespace=fix "$PATCH"; then
             echo "Applied with -p0"
           elif git apply -p1 --whitespace=fix "$PATCH"; then
             echo "Applied with -p1"
           else
-            echo "Patch failed"; exit 1
+            echo "Patch failed"
+            exit 1
           fi
 
           git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit (patch had no effect)"
+            exit 1
+          fi
+
           git commit -m "Apply patch: $PATCH"
           git push --set-upstream origin "$BRANCH"
 
@@ -61,7 +68,7 @@ jobs:
             await github.rest.pulls.create({
               owner, repo,
               title: 'Apply patch from patches/',
-              head: '${{ steps.branch.outputs.branch }}',
+              head: '${{ steps.apply.outputs.branch }}',
               base: 'main',
-              body: 'Automated PR created from a .patch file in patches/.'
+              body: 'Automated PR created from the latest .patch in patches/.'
             });
