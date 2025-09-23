@@ -1,16 +1,21 @@
-name: Apply .patch on push (simple & robust)
+name: Apply .patch on push (robust & secure)
 
 on:
+  # pushイベントで、パッチファイルが変更されたときのみに実行
   push:
     paths:
       - 'patches/*.patch'
-
+      
 jobs:
   apply-patch:
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
+    
+    # ワークフローを実行するコミットが、ボットによるものでないことを確認
+    # これにより、無限ループを回避します
+    if: github.actor != 'github-actions[bot]'
 
     steps:
       - name: Checkout
