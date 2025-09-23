@@ -25,16 +25,29 @@ jobs:
         with: { fetch-depth: 0 }
 
       - id: extract
-        name: Extract patch from body
+        name: Extract patch from body (fence optional)
         uses: actions/github-script@v7
         with:
           script: |
             const core = require('@actions/core');
             const fs = require('fs');
-            const body = context.payload.comment ? context.payload.comment.body : context.payload.issue.body;
-            const m = body && body.match(/```(?:diff|patch)\n([\s\S]*?)```/);
-            if (!m) core.setFailed('No ```diff``` or ```patch``` block found.');
-            fs.writeFileSync('incoming.patch', m[1], 'utf8');
+            const body = context.payload.comment ? context.payload.comment.body || '' : (context.payload.issue.body || '');
+            let patch = '';
+
+            // ① フェンス付き ```diff / ```patch を優先
+            const m = body.match(/```(?:diff|patch)\n([\s\S]*?)```/);
+            if (m) {
+              patch = m[1];
+            } else {
+              // ② フェンスなしにも対応（--- a/ から末尾までをパッチとして扱う）
+              const i = body.indexOf('--- ');
+              if (i >= 0) patch = body.slice(i);
+            }
+
+            patch = patch.replace(/\r\n/g, '\n').trim();
+            if (!patch) core.setFailed('No patch block found (fenced or unfenced).');
+
+            fs.writeFileSync('incoming.patch', patch, 'utf8');
             core.setOutput('branch', `patch/${context.runId}`);
 
       - name: Apply patch and push
