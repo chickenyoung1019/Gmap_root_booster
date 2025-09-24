@@ -557,23 +557,22 @@ if (content) {
 `;
   content.appendChild(wrap);
 
-  // 2) クリックで p.tw を更新
-wrap.querySelectorAll('.pin-btn.tw').forEach(btn => {
-  // 初期状態で選択されている時間帯に is-active を付ける
-  if ((info?.tw || "") === btn.getAttribute('data-tw')) {
-    btn.classList.add('is-active');
-  }
+  const twButtons = wrap.querySelectorAll('.tw-btn');
+  twButtons.forEach(btn => {
+    btn.addEventListener('click', (event) => {
+      event.stopPropagation();
 
-  btn.addEventListener('click', () => {
-    const tw = btn.getAttribute('data-tw') || null;
-    const p = route.find(x => x.id === info.id);
-    if (p) p.tw = tw || null;
+      const twValue = btn.getAttribute('data-tw');
 
-    renderMarkers();
-    renderList();
-    marker.closePopup();
+      twButtons.forEach(b => b.classList.remove('is-active'));
+      btn.classList.add('is-active');
+
+      p.tw = twValue ? twValue : null;
+
+      renderMarkers();
+      renderList();
+    });
   });
-});
 }
 // ▲▲ ここまで（リスト版）▲▲
 
