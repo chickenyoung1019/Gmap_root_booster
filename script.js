@@ -301,13 +301,34 @@ wrap.querySelectorAll('.pin-btn.tw').forEach(btn => {
   }
 
   btn.addEventListener('click', () => {
-    const tw = btn.getAttribute('data-tw') || null;
-    const p = route.find(x => x.id === info.id);
-    if (p) p.tw = tw || null;
+    const raw = btn.getAttribute('data-tw');
+    const tw = raw ? raw : null;
 
-    renderMarkers();
+    // 既存ボタンの状態を即座に同期
+    wrap.querySelectorAll('.pin-btn.tw').forEach(b => {
+      if (b === btn) b.classList.add('is-active');
+      else b.classList.remove('is-active');
+    });
+
+    const p = route.find(x => x.id === info.id);
+    let reopenId = null;
+
+    if (p) {
+      p.tw = tw;
+      info.tw = tw;
+      if (matchFilter(p)) {
+        reopenId = p.id;
+      }
+    }
+
+    if (!reopenId) {
+      marker.closePopup();
+      renderMarkers();
+    } else {
+      renderMarkers({ reopenPopupId: reopenId });
+    }
+
     renderList();
-    marker.closePopup();
   });
 });
 }
@@ -382,12 +403,16 @@ function optimizeRoute(){
    ========================= */
 
 let markers = [];
-function renderMarkers(){
+function renderMarkers(options = {}){
+  const { reopenPopupId = null } = options;
+
   // 既存ルートピンを消す
   markers.forEach(m=>{ try{ map.removeLayer(m); }catch(_){} });
   markers = [];
 
   const bounds = L.latLngBounds([[startEnd.lat,startEnd.lng]]);
+
+  let markerToReopen = null;
 
   // 経由地マーカーを再描画
   route.forEach((p,i)=>{
@@ -399,12 +424,22 @@ function renderMarkers(){
 
     wirePopup(m, { kind: 'route', label: p.label, id: p.id, index: i, tw: p.tw });
 
+    if (reopenPopupId !== null && p.id === reopenPopupId) {
+      markerToReopen = m;
+    }
+
     markers.push(m);
     bounds.extend([p.lat,p.lng]);
   });
 
   map.fitBounds(bounds.pad(0.1));
   applyHighlight();
+
+  if (markerToReopen) {
+    setTimeout(() => {
+      try { markerToReopen.openPopup(); } catch (_) {}
+    }, 0);
+  }
 }
 
 // すべてのピン（通常・検索・S/G）とリストを削除
