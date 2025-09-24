@@ -926,7 +926,7 @@ async function loadWardIndex(pref, city){
   if (!ward) throw new Error(`未対応の区です: ${city}`);
   if (INDEX_CACHE[ward.code]) return INDEX_CACHE[ward.code];
 
-  const url = `./indexes/13_tokyo/${ward.code}_${ward.slug}.min.json`;
+  const url = `indexes/13_tokyo/${ward.code}_${ward.slug}.min.json`;
   const res = await fetch(url, { cache: "force-cache" });
   if (!res.ok) throw new Error(`辞書ファイルが見つかりません: ${url}`);
   const json = await res.json();
@@ -1124,4 +1124,5 @@ function syncFilterButtons() {
    ========================= */
 
 window.__setSearchResult = (lat,lng,label)=>setSearchPin(lat,lng,label);
+
 window.__fallbackSearch = (q)=>alert("住所正規化モジュールの読み込みに失敗しました。ネット接続 or ローカルサーバーでお試しください。");
