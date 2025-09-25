@@ -26,136 +26,8 @@ body { margin:0; padding:0; overflow:hidden; font-family:'Inter',system-ui,-appl
 
 /* 画面上部のUI */
 .header{ position:absolute; top:1rem; left:1rem; right:1rem; z-index:1000; display:flex; flex-direction:column; gap:.5rem; align-items:center; }
-.search-bar{
-  width:100%;
-  background:#fff;
-  border-radius:2rem;
-  padding:0 .75rem;
-  box-shadow:0 2px 4px rgba(0,0,0,.2);
-  display:flex;
-  align-items:center;
-  gap:.75rem;
-  color:#777;
-  min-height:3rem;
-  position:relative;
-}
-.address-fields{
-  display:flex;
-  align-items:center;
-  gap:.5rem;
-  flex:1 1 auto;
-  min-width:0;
-}
-.address-field{
-  position:relative;
-  flex:1 1 0;
-  min-width:0;
-}
-.address-field--chome{ flex:1.2 1 0; }
-.address-input{
-  width:100%;
-  border:none;
-  outline:none;
-  font-size:1rem;
-  color:#333;
-  padding:.6rem .45rem;
-  background:transparent;
-}
-.address-input:disabled{ color:#9ca3af; cursor:not-allowed; }
-.address-input::placeholder{ color:#a1a1aa; }
-.town-suggest{
-  position:absolute;
-  top:100%;
-  left:0;
-  right:0;
-  margin-top:.25rem;
-  background:#fff;
-  border-radius:.75rem;
-  box-shadow:0 10px 24px rgba(0,0,0,.18);
-  display:none;
-  z-index:1200;
-  max-height:18rem;
-  overflow-y:auto;
-}
-.town-suggest.is-open{ display:block; }
-.town-suggest button{
-  width:100%;
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-  gap:.5rem;
-  padding:.45rem .75rem;
-  border:none;
-  background:#fff;
-  cursor:pointer;
-  font-size:.95rem;
-  color:#111827;
-}
-.town-suggest button span:first-child{
-  flex:1 1 auto;
-  text-align:left;
-  overflow:hidden;
-  text-overflow:ellipsis;
-  white-space:nowrap;
-}
-.town-suggest button:hover,
-.town-suggest button:focus{ background:#eef2ff; outline:none; }
-.town-suggest .suggest-yomi{ font-size:.75rem; color:#6b7280; margin-left:auto; }
-.chome-chips{
-  display:flex;
-  align-items:center;
-  flex-wrap:wrap;
-  gap:.4rem;
-  min-height:2.5rem;
-  padding:0 .25rem;
-  font-size:.85rem;
-  color:#6b7280;
-}
-.chome-chips.empty{ color:#9ca3af; }
-.chome-chip{
-  border:1px solid #d1d5db;
-  border-radius:9999px;
-  padding:.25rem .65rem;
-  background:#fff;
-  color:#111827;
-  cursor:pointer;
-  font-size:.85rem;
-  transition:background .15s ease, color .15s ease;
-}
-.chome-chip:hover{ background:#eef2ff; }
-.chome-chip.is-active{
-  background:#2563eb;
-  color:#fff;
-  border-color:#2563eb;
-}
-.chome-note{ font-size:.72rem; color:#9ca3af; }
-.chome-placeholder{ color:#9ca3af; }
-.address-search-btn{
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  height:2.5rem;
-  padding:0 1.1rem;
-  border-radius:9999px;
-  background:#2563eb;
-  color:#fff;
-  font-weight:600;
-  font-size:.95rem;
-  border:none;
-  cursor:pointer;
-  flex-shrink:0;
-  transition:background .2s ease;
-}
-.address-search-btn:disabled{
-  background:#c7d2fe;
-  cursor:not-allowed;
-  opacity:.85;
-}
-.address-search-btn:not(:disabled):hover{ background:#1d4ed8; }
-.address-search-btn.is-disabled{
-  pointer-events:none;
-  opacity:.65;
-}
+.search-bar{ width:100%; background:#fff; border-radius:2rem; padding:.0rem; box-shadow:0 2px 4px rgba(0,0,0,.2); display:flex; align-items:center; gap:.5rem; color:#777; }
+.search-input{ flex:1; border:none; outline:none; font-size:1.2rem; color:#333; padding:.5rem .75rem; }
 .btn-container{ display:flex; align-items:center; gap:.5rem; width:100%; overflow-x:auto; white-space:nowrap; -webkit-overflow-scrolling:touch; }
 .header-item{ display:inline-flex; align-items:center; justify-content:center; height:2rem; padding:0 1rem; border-radius:9999px; background:#fff; color:#333; font-size:.875rem; font-weight:500; box-shadow:0 1px 3px rgba(0,0,0,.1); cursor:pointer; flex-shrink:0; }
 
@@ -252,6 +124,20 @@ body { margin:0; padding:0; overflow:hidden; font-family:'Inter',system-ui,-appl
   box-sizing: border-box; 
 }
 
+/* 検索バー内のベース高さを決める（バー自体の大きさは据え置き） */
+.search-bar {
+  min-height: 3rem;            /* 既存の見た目に近い高さのまま */
+  padding: 0 .5rem;            /* 左右の余白だけ少し持たせる（0でもOK） */
+  align-items: center;         /* 垂直センター揃え（再確認） */
+}
+
+/* 入力とボタン／アイコンを同じ高さ・縦中央に */
+.search-input {
+  height: 2.5rem;              /* 中の要素を揃える基準 */
+  line-height: 2.5rem;         /* テキストの縦位置を中央に */
+  padding: 0 .75rem;           /* 既存の余白を維持 */
+}
+
 /* 虫眼鏡アイコンにクラスが無い場合でも効くように、汎用的に対応 */
 .search-bar svg,
 .search-bar i,
@@ -262,6 +148,15 @@ body { margin:0; padding:0; overflow:hidden; font-family:'Inter',system-ui,-appl
   justify-content: center;
   height: 2.5rem;              /* 入力と同じ高さに */
   line-height: 1;              /* 余計な縦ズレを避ける */
+}
+
+/* ボタンの見た目を微調整（形は据え置き） */
+.search-bar button {
+  padding: 0 .9rem;
+  border: none;                /* 既にボタンに枠があれば外す */
+  background: transparent;     /* 既存デザインを尊重、必要なら #fff などに */
+  border-radius: 9999px;
+  cursor: pointer;
 }
 
 /* アイコンの大きさを安定させる（Material IconsやSVGの場合） */
@@ -277,6 +172,17 @@ body { margin:0; padding:0; overflow:hidden; font-family:'Inter',system-ui,-appl
 .leaflet-bottom.leaflet-right .leaflet-control-zoom {
   margin-bottom: 6.5rem !important;
 }
+
+/* 検索バーのクリア× */
+.search-bar { position: relative; }
+.search-clear {
+  position: absolute; right: 2.5rem; top: 50%; transform: translateY(-50%);
+  width: 1.75rem; height: 1.75rem; border-radius: 9999px;
+  display: none; align-items: center; justify-content: center;
+  background: #f3f4f6; border: 1px solid #e5e7eb; cursor: pointer;
+  font-weight: 700; color: #666; line-height: 1;
+}
+.search-clear:hover { background:#eee; }
 
 .lock-btn{
   border:1px solid #e5e7eb; background:#fff; color:#444;
