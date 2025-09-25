@@ -761,16 +761,9 @@ bulkClose?.addEventListener('click', () => {
 })();
 
 // ▼ 「住所だけ抽出」ボタン処理（1件=1〜2行＋区切り線）
-extractBtn?.addEventListener('click', async () => {
+extractBtn?.addEventListener('click', () => {
   const src = bulkInput.value || '';
-  let ents = [];
-  try {
-    ents = await extractEntries(src);
-  } catch (e) {
-    console.error(e);
-    alert('住所抽出に失敗しました');
-    return;
-  }
+  const ents = extractEntries(src);
 
   // 区切り線は短めのダッシュ。再抽出時は無視される（DASH_ONLY で除外）
   const SEP = '――――';
@@ -786,14 +779,7 @@ extractBtn?.addEventListener('click', async () => {
 // ▼ 一括「取り込み」：住所だけをルートに追加（先に即時表示→あとで順次ジオコーディング）
 addBtn?.addEventListener('click', async () => {
   const src = bulkInput.value || '';
-  let ents = [];
-  try {
-    ents = await extractEntries(src);      // ← さっき入れた住所抽出（住所1/住所2）
-  } catch (e) {
-    console.error(e);
-    alert('住所抽出に失敗しました');
-    return;
-  }
+  const ents = extractEntries(src);      // ← さっき入れた住所抽出（住所1/住所2）
   if (!ents.length) { alert('住所が見つかりません'); return; }
 
   const nextIdBase = Math.max(0, ...route.map(x => x.id || 0)) + 1;
@@ -823,7 +809,7 @@ addBtn?.addEventListener('click', async () => {
 });
 
 
-// 住所抽出（辞書アンカーMVP + 旧正規表現フォールバック）
+// 住所抽出（厳しめ本体 + ゆるめ建物）
 function normalizeLoosely(s){
   if(!s) return s;
   return s.normalize('NFKC')
@@ -862,266 +848,8 @@ const BLDG_RE = new RegExp(
 // 「—」だけ・飾り線
 const DASH_ONLY = /^[—\-－─━_]+$/;
 
-const addressDetectorConfig = window.__addressDetectorConfig || {};
-if (!('DETECTOR_MODE' in addressDetectorConfig)) addressDetectorConfig.DETECTOR_MODE = 'dict';
-if (!('ANCHOR_REQUIRE_CITY' in addressDetectorConfig)) addressDetectorConfig.ANCHOR_REQUIRE_CITY = true;
-if (!('ANCHOR_VALIDATE_CHOME' in addressDetectorConfig)) addressDetectorConfig.ANCHOR_VALIDATE_CHOME = true;
-if (!('ANCHOR_USE_2LINES' in addressDetectorConfig)) addressDetectorConfig.ANCHOR_USE_2LINES = true;
-if (!('ANCHOR_USE_1LINE' in addressDetectorConfig)) addressDetectorConfig.ANCHOR_USE_1LINE = true;
-window.__addressDetectorConfig = addressDetectorConfig;
-
-const addressAnchorStats = window.__addressAnchorStats || {};
-if (!addressAnchorStats.counts) addressAnchorStats.counts = { NO_CITY_TOKEN: 0, CITY_OK_TOWN_MISS: 0, TOWN_OK_CHOME_INVALID: 0 };
-if (!addressAnchorStats.hits) addressAnchorStats.hits = { via2: 0, via1: 0 };
-if (!addressAnchorStats.loads) addressAnchorStats.loads = { total: 0, cacheHit: 0 };
-window.__addressAnchorStats = addressAnchorStats;
-
-window.__flushAddressAnchorStats = function flushAddressAnchorStats(){
-  console.table(addressAnchorStats.counts);
-  console.table(addressAnchorStats.hits);
-  console.table(addressAnchorStats.loads);
-  return addressAnchorStats;
-};
-
-const WARD_ANCHOR_CACHE = Object.create(null);
-const CHOME_TOKEN_RE = /^([一二三四五六七八九十〇零\d]{1,3})丁目/;
-
-async function extractEntries(text){
-  const mode = addressDetectorConfig.DETECTOR_MODE || 'dict';
-  if (mode === 'regex') {
-    return extractEntriesWithRegex(text);
-  }
-  if (mode !== 'dict') return [];
-
-  const lines = prepareAddressLines(text);
-  if (!lines.length) return [];
-
-  const hits = await detectWithDictionary(lines);
-  return hits.map(hit => ({
-    addr1: formatDetectedAddress(hit),
-    addr2: '',
-    pref: hit.pref,
-    city: hit.city,
-    town: hit.town,
-    chome: hit.chome,
-    via: hit.via,
-    idx: hit.idx,
-    dictWardCode: hit.dictWardCode
-  }));
-}
-
-function prepareAddressLines(text){
-  const rawLines = (text || '').split(/\r?\n/);
-  const prepared = [];
-  for (let i = 0; i < rawLines.length; i++){
-    const raw = rawLines[i];
-    const normalized = normalizeLoosely(raw);
-    if (!normalized) continue;
-    if (DASH_ONLY.test(normalized)) continue;
-    prepared.push({
-      text: normalized,
-      tight: normalized.replace(/\s+/g, ''),
-      raw,
-      rawIndex: i
-    });
-  }
-  return prepared;
-}
-
-function formatDetectedAddress(hit){
-  const parts = [hit.pref, hit.city, hit.town];
-  if (typeof hit.chome === 'number') parts.push(`${hit.chome}丁目`);
-  return parts.filter(Boolean).join(' ').trim();
-}
-
-function bumpAnchorStat(bucket, key){
-  if (!addressAnchorStats[bucket]) addressAnchorStats[bucket] = {};
-  if (typeof addressAnchorStats[bucket][key] !== 'number') addressAnchorStats[bucket][key] = 0;
-  addressAnchorStats[bucket][key] += 1;
-}
-
-async function detectWithDictionary(lines){
-  const results = [];
-  const consumed = new Set();
-  const use2 = addressDetectorConfig.ANCHOR_USE_2LINES !== false;
-  const use1 = addressDetectorConfig.ANCHOR_USE_1LINE !== false;
-
-  if (use2){
-    for (let i = 0; i < lines.length - 1; i++){
-      if (consumed.has(i) || consumed.has(i + 1)) continue;
-      const hit = await detectWindow([lines[i], lines[i + 1]], '2lines');
-      if (hit){
-        results.push(hit);
-        consumed.add(i);
-        consumed.add(i + 1);
-      }
-    }
-  }
-
-  if (use1){
-    for (let i = 0; i < lines.length; i++){
-      if (consumed.has(i)) continue;
-      const hit = await detectWindow([lines[i]], '1line');
-      if (hit){
-        results.push(hit);
-        consumed.add(i);
-      }
-    }
-  }
-
-  return results;
-}
-
-async function detectWindow(windowLines, via){
-  if (!windowLines.length) return null;
-  const windowText = windowLines.map(l => l.tight || '').join('');
-  if (!windowText) return null;
-
-  const wardHit = findWardToken(windowText);
-  if (!wardHit){
-    if (addressDetectorConfig.ANCHOR_REQUIRE_CITY !== false) {
-      bumpAnchorStat('counts', 'NO_CITY_TOKEN');
-    }
-    return null;
-  }
-
-  let anchorIndex;
-  try{
-    anchorIndex = await getWardAnchorIndex(wardHit.ward);
-  }catch(err){
-    console.error(err);
-    return null;
-  }
-
-  const townInfo = findTownCandidate(windowText, anchorIndex, wardHit.index);
-  if (!townInfo){
-    bumpAnchorStat('counts', 'CITY_OK_TOWN_MISS');
-    return null;
-  }
-
-  let finalChome = null;
-  const hasChome = typeof townInfo.chomeRaw === 'string' && townInfo.chomeRaw.length > 0;
-  if (hasChome){
-    const chomeValue = townInfo.chomeValue;
-    if (addressDetectorConfig.ANCHOR_VALIDATE_CHOME !== false){
-      if (!validateChome(anchorIndex, townInfo.town, chomeValue)){
-        bumpAnchorStat('counts', 'TOWN_OK_CHOME_INVALID');
-        return null;
-      }
-    }
-    if (typeof chomeValue === 'number' && !Number.isNaN(chomeValue)){
-      finalChome = chomeValue;
-    } else {
-      bumpAnchorStat('counts', 'TOWN_OK_CHOME_INVALID');
-      return null;
-    }
-  }
-
-  bumpAnchorStat('hits', via === '2lines' ? 'via2' : 'via1');
-
-  const idx = windowLines.map(l => l.rawIndex).filter(n => typeof n === 'number').sort((a,b)=>a-b);
-  return {
-    pref: '東京都',
-    city: wardHit.city,
-    town: townInfo.town,
-    chome: finalChome,
-    via,
-    idx,
-    dictWardCode: wardHit.ward.code
-  };
-}
-
-function findWardToken(text){
-  if (!text) return null;
-  const wardNames = getWardNameList();
-  for (const name of wardNames){
-    const idx = text.indexOf(name);
-    if (idx !== -1){
-      return { city: name, ward: TOKYO_WARDS[name], index: idx };
-    }
-  }
-  return null;
-}
-
-const getWardNameList = (() => {
-  let cache = null;
-  return () => {
-    if (!cache){
-      if (typeof TOKYO_WARDS === 'undefined') return [];
-      cache = Object.keys(TOKYO_WARDS).sort((a,b) => b.length - a.length);
-    }
-    return cache;
-  };
-})();
-
-async function getWardAnchorIndex(ward){
-  if (!ward) return null;
-  const cached = WARD_ANCHOR_CACHE[ward.code];
-  if (cached){
-    bumpAnchorStat('loads', 'cacheHit');
-    return cached;
-  }
-  bumpAnchorStat('loads', 'total');
-  const promise = loadWardIndex('東京都', ward.label).then(dict => buildWardAnchorIndex(dict, ward));
-  WARD_ANCHOR_CACHE[ward.code] = promise;
-  const index = await promise;
-  WARD_ANCHOR_CACHE[ward.code] = index;
-  return index;
-}
-
-function buildWardAnchorIndex(dict, ward){
-  const data = dict && dict.data ? dict.data : {};
-  const townSet = new Set();
-  const chomeMap = Object.create(null);
-
-  for (const key of Object.keys(data)){
-    if (key.startsWith('__')) continue;
-    const [town, chomeToken] = key.split('|');
-    if (!town) continue;
-    townSet.add(town);
-    const chomeStr = chomeToken || '';
-    if (!chomeStr || chomeStr === '-') continue;
-    const num = parseInt(chomeStr, 10);
-    if (!Number.isNaN(num)){
-      if (!(chomeMap[town] instanceof Set)) chomeMap[town] = new Set();
-      chomeMap[town].add(num);
-    }
-  }
-
-  return {
-    ward,
-    meta: dict && dict.meta ? dict.meta : {},
-    townList: Array.from(townSet).sort((a,b)=>b.length - a.length),
-    chomeMap
-  };
-}
-
-function findTownCandidate(text, anchorIndex, cityIndex){
-  if (!anchorIndex || !anchorIndex.townList) return null;
-  for (const town of anchorIndex.townList){
-    const idx = text.indexOf(town);
-    if (idx === -1) continue;
-    if (typeof cityIndex === 'number' && cityIndex >= 0 && idx < cityIndex) continue;
-    const after = text.slice(idx + town.length);
-    const m = after.match(CHOME_TOKEN_RE);
-    if (m){
-      return { town, chomeRaw: m[1], chomeValue: jpNumToInt(m[1]) };
-    }
-    return { town, chomeRaw: null, chomeValue: null };
-  }
-  return null;
-}
-
-function validateChome(anchorIndex, town, chomeValue){
-  if (!anchorIndex || !anchorIndex.chomeMap) return false;
-  if (typeof chomeValue !== 'number' || Number.isNaN(chomeValue)) return false;
-  const set = anchorIndex.chomeMap[town];
-  if (!(set instanceof Set)) return false;
-  return set.has(chomeValue);
-}
-
-// 旧正規表現ベースの抽出（フォールバック用）
-function extractEntriesWithRegex(text){
+// 1件を { addr1, addr2 } で返す
+function extractEntries(text){
   const rawLines = (text||'').split(/\r?\n/).map(normalizeLoosely).filter(Boolean);
   const lines = rawLines.filter(l => !DASH_ONLY.test(l));
 
@@ -1310,7 +1038,7 @@ function setSearchPin(lat,lng,label){
 
 // 検索ボタン/Enter
 async function onSearch(){
-  const q = normalizeLoosely(searchInput.value || '');
+  const q = (searchInput.value || '').trim();
   if(!q) return;
   try{
     const r = await geocodeTokyo23(q);
