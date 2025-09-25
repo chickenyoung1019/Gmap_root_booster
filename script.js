@@ -952,6 +952,21 @@ function townChomeFrom(townName){
   return { town: townName || "", chome: null };
 }
 
+function normalizeSearchQuery(input){
+  let q = (input ?? "") + "";
+  q = q.normalize("NFKC");
+  q = q.replace(/\s+/g, " ").trim();
+  q = q.replace(/[\u2212\u2010\u2011\u2012\u2013\u2014\u2015\u2043\u30FC\uFF0D]+/g, "-");
+  q = q.replace(/[０-９]/g, d => String.fromCharCode(d.charCodeAt(0) - 0xFEE0));
+  q = q.replace(/([一二三四五六七八九十〇零]+)丁目/g, (_, kanji) => {
+    const num = jpNumToInt(kanji);
+    return Number.isFinite(num) ? `${num}丁目` : `${kanji}丁目`;
+  });
+  q = q.replace(/[「」『』（）()［］｛｝{}<>〈〉《》【】〔〕“”"'\uFF5E\u301C,，、。．・･\/]/g, "");
+  q = q.replace(/\s+/g, " ").trim();
+  return q;
+}
+
 // @geolonia/normalize-japanese-addresses で代表点に寄せる
 async function geocodeTokyo23(address){
   const { normalize } = await import("https://esm.sh/@geolonia/normalize-japanese-addresses");
@@ -1038,7 +1053,7 @@ function setSearchPin(lat,lng,label){
 
 // 検索ボタン/Enter
 async function onSearch(){
-  const q = (searchInput.value || '').trim();
+  const q = normalizeSearchQuery(searchInput.value || '');
   if(!q) return;
   try{
     const r = await geocodeTokyo23(q);
