@@ -26,10 +26,47 @@
         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
           <path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/>
         </svg>
-        <input id="searchInput" class="search-input" placeholder="例）大田区蒲田5-13-1 / 池上三丁目（概算地点）"/>
-        <button id="searchBtn" class="header-item" style="color:#1d4ed8">検索</button>
+        <div class="address-fields">
+          <div class="address-field">
+            <input id="wardInput" class="address-input" list="wardList" placeholder="区を選択" autocomplete="off" />
+            <datalist id="wardList">
+              <option value="千代田区"></option>
+              <option value="中央区"></option>
+              <option value="港区"></option>
+              <option value="新宿区"></option>
+              <option value="文京区"></option>
+              <option value="台東区"></option>
+              <option value="墨田区"></option>
+              <option value="江東区"></option>
+              <option value="品川区"></option>
+              <option value="目黒区"></option>
+              <option value="大田区"></option>
+              <option value="世田谷区"></option>
+              <option value="渋谷区"></option>
+              <option value="中野区"></option>
+              <option value="杉並区"></option>
+              <option value="豊島区"></option>
+              <option value="北区"></option>
+              <option value="荒川区"></option>
+              <option value="板橋区"></option>
+              <option value="練馬区"></option>
+              <option value="足立区"></option>
+              <option value="葛飾区"></option>
+              <option value="江戸川区"></option>
+            </datalist>
+          </div>
+          <div class="address-field address-field--town">
+            <input id="townInput" class="address-input" placeholder="町名（2文字以上）" autocomplete="off" disabled />
+            <div id="townSuggest" class="town-suggest"></div>
+          </div>
+          <div class="address-field address-field--chome">
+            <div id="chomeChips" class="chome-chips">区と町を選択してください</div>
+          </div>
+        </div>
+        <button id="addressSearchBtn" class="address-search-btn" disabled>検索</button>
       </div>
       <div class="btn-container">
+        <button class="header-item" id="optimizeBtn" style="color:#1d4ed8">最適化</button>
         <button class="header-item" id="prevPack">前の10件</button>
         <button class="header-item" id="openPack" style="color:#1d4ed8">Googleマップで開く</button>
         <button class="header-item" id="nextPack">次の10件</button>
