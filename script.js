@@ -1,3 +1,30 @@
+// ===== Feature flags for Search (1-line) =====
+const DETECTOR_MODE = 'dict'; // 'dict' | 'regex'  ← 既定は辞書アンカー
+const SUGGEST_DEBOUNCE_MS = 120;
+const SUGGEST_MAX = 20;
+
+// ===== Minimal normalization for anchor =====
+const nfkc = (s)=> (s||'').normalize('NFKC');
+const unifyHyphen = (s)=> s.replace(/[‐-‒–—―ー−]/g, '-');
+const squeezeSpaces = (s)=> s.replace(/\s+/g,' ').trim();
+const stripPunct = (s)=> s.replace(/[、。．，！？「」『』（）［］〈〉＜＞…・：；]/g,'');
+// 「丁目」直前の漢数字だけを算用に：十一丁目→11丁目（既存 jpNumToInt を流用）
+function normalizeChomeOnly(s){
+  const src = (s || '');
+  return src.replace(/([〇一二三四五六七八九十百千万億兆]+)\s*丁目/g, (_,kanji)=>{
+    try{ return `${jpNumToInt(kanji)}丁目`; }catch{ return _; }
+  });
+}
+function normalizeForAnchor(input){
+  return squeezeSpaces(
+    stripPunct(
+      unifyHyphen(
+        nfkc(normalizeChomeOnly(input))
+      )
+    )
+  );
+}
+
 /* =========================
    グローバル設定とユーティリティ
    ========================= */
@@ -1038,16 +1065,10 @@ function setSearchPin(lat,lng,label){
 
 // 検索ボタン/Enter
 async function onSearch(){
-  const q = (searchInput.value || '').trim();
-  if(!q) return;
-  try{
-    const r = await geocodeTokyo23(q);
-    if(!r.ok){ alert(r.reason || "見つかりませんでした"); return; }
-    setSearchPin(r.lat, r.lng, `${r.label || "検索地点"}（概算・代表点）`);
-  }catch(e){
-    console.error(e);
-    alert(e.message || "検索に失敗しました");
-  }
+  // 新：辞書アンカー方式（regex 抽出は無効化）
+  if (DETECTOR_MODE !== 'dict') return;
+  // 辞書アンカーは UI 側（区/町/丁目）で確定後に runAnchoredSearch() を呼ぶ
+  // ここでは何もしない（既存ハンドラを温存する場合は無効化してOK）
 }
 searchBtn?.addEventListener("click", onSearch);
 searchInput?.addEventListener("keydown", e => { if(e.key==="Enter") onSearch(); });
