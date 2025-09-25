@@ -890,14 +890,8 @@ function extractEntries(text){
    検索（@geolonia/nja + 区別辞書）
    ========================= */
 
-const PREF_NAME = "東京都";
-
-const wardInput = document.getElementById('wardInput');
-const townInput = document.getElementById('townInput');
-const townSuggest = document.getElementById('townSuggest');
-const chomeChips = document.getElementById('chomeChips');
-const addressSearchBtn = document.getElementById('addressSearchBtn');
-const townField = document.querySelector('.address-field--town');
+const searchBtn = document.getElementById('searchBtn');
+const searchInput = document.getElementById('searchInput');
 
 const TOKYO_WARDS = {
   "千代田区": { code:"13101", slug:"chiyoda",  label:"千代田区" },
@@ -925,66 +919,9 @@ const TOKYO_WARDS = {
   "江戸川区": { code:"13123", slug:"edogawa", label:"江戸川区" }
 };
 const INDEX_CACHE = {}; // ward.code → 辞書JSON
-const TOWN_INDEX_CACHE = new Map(); // ward.code → 町インデックス
-const TOWN_YOMI_CACHE = new Map();  // `${pref}|${ward}|${town}` → ひらがな読み
-let normalizeModulePromise = null;
-
-function kanaToHira(str){
-  if(!str) return '';
-  return str
-    .replace(/[ァ-ン]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0x60))
-    .replace(/ヵ/g, 'か')
-    .replace(/ヶ/g, 'け');
-}
-
-function preprocessAddressInput(input){
-  if(!input) return '';
-  let text = input.normalize('NFKC');
-  text = text.replace(/[‐–—―ー−]/g, '-');
-  text = text.replace(/[０-９]/g, d => String.fromCharCode(d.charCodeAt(0) - 0xFEE0));
-  text = text.replace(/([一二三四五六七八九十〇零]+)丁目/g, (_, kanji) => {
-    const n = jpNumToInt(kanji);
-    return Number.isFinite(n) ? `${n}丁目` : `${kanji}丁目`;
-  });
-  text = text.replace(/[。、，．・\/／！？!?（）()［］｛｝{}「」『』【】《》〈〉〔〕“”"'…‥；;:]/g, '');
-  text = text.replace(/\s+/g, ' ').trim();
-  return text;
-}
-
-function normalizeTownForMatch(text){
-  return preprocessAddressInput(text || '').replace(/\s+/g, '');
-}
-
-function normalizeYomi(text){
-  const base = preprocessAddressInput(text || '').replace(/\s+/g, '');
-  return kanaToHira(base);
-}
-
-function buildTownQuery(value){
-  const cleaned = preprocessAddressInput(value || '');
-  const collapsed = cleaned.replace(/\s+/g, '');
-  return {
-    raw: value || '',
-    kanji: collapsed,
-    yomi: kanaToHira(collapsed)
-  };
-}
-
-function buildNormalizedAddress(pref, ward, town, chome){
-  const parts = [pref, ward, town].filter(Boolean);
-  if (Number.isInteger(chome)) parts.push(`${chome}丁目`);
-  return parts.join(' ').trim();
-}
-
-async function ensureNormalizer(){
-  if(!normalizeModulePromise){
-    normalizeModulePromise = import("https://esm.sh/@geolonia/normalize-japanese-addresses").then(mod => mod.normalize);
-  }
-  return normalizeModulePromise;
-}
 
 async function loadWardIndex(pref, city){
-  if (pref !== PREF_NAME) throw new Error("東京都のみ対応の最小版です");
+  if (pref !== "東京都") throw new Error("東京都のみ対応の最小版です");
   const ward = TOKYO_WARDS[city];
   if (!ward) throw new Error(`未対応の区です: ${city}`);
   if (INDEX_CACHE[ward.code]) return INDEX_CACHE[ward.code];
@@ -1015,87 +952,10 @@ function townChomeFrom(townName){
   return { town: townName || "", chome: null };
 }
 
-async function getTownReading(pref, ward, town){
-  const key = `${pref}|${ward}|${town}`;
-  if (TOWN_YOMI_CACHE.has(key)) return TOWN_YOMI_CACHE.get(key);
-  try {
-    const normalize = await ensureNormalizer();
-    const result = await normalize(`${pref}${ward}${town}`);
-    const kana = (result.town_kana || '').replace(/\s+/g, '');
-    const hir = normalizeYomi(kana);
-    TOWN_YOMI_CACHE.set(key, hir);
-    return hir;
-  } catch (err) {
-    console.warn('よみ取得に失敗:', pref, ward, town, err);
-    TOWN_YOMI_CACHE.set(key, '');
-    return '';
-  }
-}
-
-async function buildTownIndex(pref, wardName){
-  const ward = TOKYO_WARDS[wardName];
-  if (!ward) return [];
-  if (TOWN_INDEX_CACHE.has(ward.code)) return TOWN_INDEX_CACHE.get(ward.code);
-
-  const dict = await loadWardIndex(pref, wardName);
-  const data = dict?.data || {};
-  const townMap = new Map();
-
-  for (const [key, value] of Object.entries(data)){
-    const [townRaw, chomeRaw] = key.split('|');
-    if (!townRaw) continue;
-    const townName = townRaw.trim();
-    if (!townName) continue;
-    let entry = townMap.get(townName);
-    if (!entry){
-      entry = {
-        town: townName,
-        chomeSet: new Set(),
-        points: new Map(),
-        defaultPoint: null
-      };
-      townMap.set(townName, entry);
-    }
-    const chomeKey = (chomeRaw && chomeRaw !== '-') ? chomeRaw : '-';
-    entry.points.set(chomeKey, value);
-    if (chomeKey === '-') entry.defaultPoint = value;
-    else entry.chomeSet.add(chomeKey);
-  }
-
-  const entries = Array.from(townMap.values());
-  const results = await Promise.all(entries.map(async entry => {
-    const yomi = await getTownReading(pref, wardName, entry.town);
-    const chomes = Array.from(entry.chomeSet).map(n => parseInt(n, 10)).filter(n => Number.isInteger(n)).sort((a,b)=>a-b);
-    let defaultPoint = entry.defaultPoint;
-    if (!defaultPoint){
-      const coords = Array.from(entry.points.values());
-      if (coords.length){
-        const lat = coords.reduce((sum,p)=>sum + p.lat,0) / coords.length;
-        const lng = coords.reduce((sum,p)=>sum + p.lng,0) / coords.length;
-        defaultPoint = { lat, lng, level: coords[0]?.level || 'average' };
-      }
-    }
-    return {
-      town: entry.town,
-      townNormalized: normalizeTownForMatch(entry.town),
-      yomiDisplay: yomi,
-      yomiNormalized: normalizeYomi(yomi),
-      chomes,
-      points: Object.fromEntries(entry.points),
-      defaultPoint
-    };
-  }));
-
-  results.sort((a,b)=>a.town.localeCompare(b.town,'ja'));
-  TOWN_INDEX_CACHE.set(ward.code, results);
-  return results;
-}
-
 // @geolonia/normalize-japanese-addresses で代表点に寄せる
 async function geocodeTokyo23(address){
-  const normalize = await ensureNormalizer();
-  const cleaned = preprocessAddressInput(address);
-  const nja = await normalize(cleaned);
+  const { normalize } = await import("https://esm.sh/@geolonia/normalize-japanese-addresses");
+  const nja = await normalize(address);
   const pref = nja.pref || "";
   const city = nja.city || nja.county || "";
 
@@ -1130,269 +990,72 @@ function setSearchPin(lat,lng,label){
   return m;
 }
 
-let currentWardInfo = null;
-let currentTownIndex = [];
-let selectedTownEntry = null;
-let selectedChome = null;
-let townSuggestTimer = null;
-let wardLoadToken = 0;
+// 検索バーに × を挿入（最適化ボタンと重ならないように動的に右余白を算出）
+(function initSearchClear(){
+  const bar   = document.querySelector('.search-bar');
+  const input = document.getElementById('searchInput');
+  const opt   = document.getElementById('searchBtn'); // ← 最適化ボタンに転用済み
+  if (!bar || !input) return;
 
-const TOWN_SUGGEST_DEBOUNCE = 120;
-const TOWN_SUGGEST_MAX = 20;
-
-function updateSearchButtonState(){
-  const ready = Boolean(currentWardInfo && selectedTownEntry);
-  if (addressSearchBtn) addressSearchBtn.disabled = !ready;
-}
-
-function renderChomeChips(entry, placeholder = '区と町を選択してください'){
-  if (!chomeChips) return;
-  chomeChips.innerHTML = '';
-  if (!entry){
-    chomeChips.classList.add('empty');
-    chomeChips.textContent = placeholder;
-    return;
+  let clearBtn = bar.querySelector('.search-clear');
+  if(!clearBtn){
+    clearBtn = document.createElement('button');
+    clearBtn.className = 'search-clear';
+    clearBtn.type = 'button';
+    clearBtn.setAttribute('aria-label','クリア');
+    clearBtn.textContent = '×';
+    bar.appendChild(clearBtn);
   }
-  const chomes = entry.chomes || [];
-  if (!chomes.length){
-    chomeChips.classList.add('empty');
-    chomeChips.textContent = '丁目情報なし（未選択で検索可）';
-    return;
-  }
-  chomeChips.classList.remove('empty');
-  const frag = document.createDocumentFragment();
-  chomes.forEach(num => {
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'chome-chip';
-    chip.dataset.value = String(num);
-    chip.textContent = String(num);
-    chip.addEventListener('click', () => {
-      const value = Number(chip.dataset.value);
-      selectedChome = (selectedChome === value) ? null : value;
-      Array.from(chomeChips.querySelectorAll('.chome-chip')).forEach(btn => {
-        const v = Number(btn.dataset.value);
-        btn.classList.toggle('is-active', selectedChome === v);
-      });
-      updateSearchButtonState();
-    });
-    frag.appendChild(chip);
-  });
-  const note = document.createElement('span');
-  note.className = 'chome-note';
-  note.textContent = '※ 未選択でも検索できます';
-  frag.appendChild(note);
-  chomeChips.appendChild(frag);
-  Array.from(chomeChips.querySelectorAll('.chome-chip')).forEach(btn => {
-    const v = Number(btn.dataset.value);
-    btn.classList.toggle('is-active', selectedChome === v);
-  });
-}
 
-function hideTownSuggestions(){
-  if (!townSuggest) return;
-  townSuggest.innerHTML = '';
-  townSuggest.classList.remove('is-open');
-}
-
-function showTownSuggestions(entries){
-  if (!townSuggest) return;
-  townSuggest.innerHTML = '';
-  if (!entries.length){
-    hideTownSuggestions();
-    return;
-  }
-  const frag = document.createDocumentFragment();
-  entries.slice(0, TOWN_SUGGEST_MAX).forEach(entry => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.innerHTML = `<span>${entry.town}</span>`;
-    btn.className = 'town-suggest-item';
-    if (entry.yomiDisplay){
-      const span = document.createElement('span');
-      span.className = 'suggest-yomi';
-      span.textContent = entry.yomiDisplay;
-      btn.appendChild(span);
+  // 最適化ボタンの実寸から、×の right を決める
+  function placeClear(){
+    // ボタンが無ければ従来の 2.5rem
+    let right = 40; // px
+    if (opt) {
+      const w = Math.ceil(opt.getBoundingClientRect().width); // 実幅
+      right = w - 3; // ボタン幅 + ちょい間隔
     }
-    btn.addEventListener('click', () => {
-      selectedTownEntry = entry;
-      selectedChome = null;
-      if (townInput) {
-        townInput.value = entry.town;
-        townInput.setAttribute('data-selected-town', entry.town);
-      }
-      renderChomeChips(entry, '丁目情報なし（未選択で検索可）');
-      hideTownSuggestions();
-      updateSearchButtonState();
-    });
-    frag.appendChild(btn);
+    clearBtn.style.right = right + 'px';
+  }
+
+  const toggle = ()=> {
+    const v = (input.value || '').trim();
+    clearBtn.style.display = v ? 'inline-flex' : 'none';
+    placeClear();
+  };
+
+  input.addEventListener('input', toggle);
+  input.addEventListener('keydown', e => {
+    if(e.key==='Escape'){ input.value=''; input.dispatchEvent(new Event('input')); input.focus(); }
   });
-  townSuggest.appendChild(frag);
-  townSuggest.classList.add('is-open');
-}
+  clearBtn.addEventListener('click', ()=>{ input.value=''; input.dispatchEvent(new Event('input')); input.focus(); });
 
-function filterTownSuggestions(query){
-  if (!query) return [];
-  const targetLen = Math.max(query.kanji.length, query.yomi.length);
-  if (targetLen < 2) return [];
-  const hits = [];
-  for (const entry of currentTownIndex){
-    const yomiMatch = query.yomi.length >= 2 && entry.yomiNormalized && entry.yomiNormalized.startsWith(query.yomi);
-    const kanjiMatch = query.kanji.length >= 2 && entry.townNormalized.startsWith(query.kanji);
-    if (!yomiMatch && !kanjiMatch) continue;
-    hits.push({ entry, weight: yomiMatch ? 0 : 1 });
-  }
-  hits.sort((a,b)=>a.weight - b.weight || a.entry.town.length - b.entry.town.length || a.entry.town.localeCompare(b.entry.town,'ja'));
-  return hits.map(h => h.entry).slice(0, TOWN_SUGGEST_MAX);
-}
+  // リサイズやフォント計測後にも位置を調整
+  window.addEventListener('resize', placeClear);
+  setTimeout(placeClear, 0);
+  toggle();
+})();
 
-function resolveWardInfo(raw){
-  const cleaned = preprocessAddressInput(raw || '').replace(/\s+/g, '');
-  if (!cleaned) return null;
-  let name = cleaned.replace(new RegExp(`^${PREF_NAME}`), '');
-  name = name.replace(/区+$/, '区');
-  if (!name.endsWith('区')) name += '区';
-  return TOKYO_WARDS[name] || null;
-}
-
-async function handleWardChange(){
-  const info = resolveWardInfo(wardInput?.value || '');
-  if (!info){
-    currentWardInfo = null;
-    wardLoadToken++;
-    currentTownIndex = [];
-    selectedTownEntry = null;
-    selectedChome = null;
-    if (townInput){
-      townInput.value = '';
-      townInput.disabled = true;
-      townInput.removeAttribute('data-selected-town');
-      townInput.placeholder = '町名（2文字以上）';
-    }
-    hideTownSuggestions();
-    renderChomeChips(null, '区と町を選択してください');
-    updateSearchButtonState();
-    return;
-  }
-
-  if (wardInput) wardInput.value = info.label;
-  currentWardInfo = info;
-  const token = ++wardLoadToken;
-  currentTownIndex = [];
-  selectedTownEntry = null;
-  selectedChome = null;
-  hideTownSuggestions();
-  renderChomeChips(null, '町の辞書を読み込み中…');
-  updateSearchButtonState();
-  if (townInput){
-    townInput.value = '';
-    townInput.disabled = true;
-    townInput.placeholder = '町名（読込中…）';
-    townInput.removeAttribute('data-selected-town');
-  }
-
-  try {
-    const towns = await buildTownIndex(PREF_NAME, info.label);
-    if (token !== wardLoadToken) return;
-    currentTownIndex = towns;
-    if (townInput){
-      townInput.disabled = false;
-      townInput.placeholder = '町名（2文字以上）';
-    }
-    renderChomeChips(null, '町を候補から選択してください');
-  } catch (err){
-    if (token !== wardLoadToken) return;
-    console.error(err);
-    alert(err.message || '町の辞書を読み込めませんでした');
-    if (townInput){
-      townInput.disabled = true;
-      townInput.placeholder = '町名（読み込み失敗）';
-    }
-    renderChomeChips(null, '辞書の読み込みに失敗しました');
-  } finally {
-    if (token === wardLoadToken) updateSearchButtonState();
+// 検索ボタン/Enter
+async function onSearch(){
+  const q = (searchInput.value || '').trim();
+  if(!q) return;
+  try{
+    const r = await geocodeTokyo23(q);
+    if(!r.ok){ alert(r.reason || "見つかりませんでした"); return; }
+    setSearchPin(r.lat, r.lng, `${r.label || "検索地点"}（概算・代表点）`);
+  }catch(e){
+    console.error(e);
+    alert(e.message || "検索に失敗しました");
   }
 }
-
-function handleTownInput(){
-  if (!townInput) return;
-  const value = townInput.value || '';
-  if (townInput.dataset.selectedTown !== value){
-    selectedTownEntry = null;
-    selectedChome = null;
-    townInput.removeAttribute('data-selected-town');
-    renderChomeChips(null, '候補から町を選択してください');
-    updateSearchButtonState();
-  }
-
-  if (townSuggestTimer) clearTimeout(townSuggestTimer);
-  const query = buildTownQuery(value);
-  if (Math.max(query.kanji.length, query.yomi.length) < 2){
-    hideTownSuggestions();
-    return;
-  }
-  townSuggestTimer = setTimeout(() => {
-    const suggestions = filterTownSuggestions(query);
-    if (suggestions.length) showTownSuggestions(suggestions);
-    else hideTownSuggestions();
-  }, TOWN_SUGGEST_DEBOUNCE);
-}
-
-function handleTownKeydown(e){
-  if (e.key === 'Enter'){
-    if (townSuggest && townSuggest.classList.contains('is-open')){
-      const first = townSuggest.querySelector('button');
-      if (first){
-        e.preventDefault();
-        first.click();
-      }
-    }
-  } else if (e.key === 'Escape'){
-    hideTownSuggestions();
-  }
-}
-
-async function confirmSelectedAddress(){
-  if (!currentWardInfo || !selectedTownEntry) return;
-  const chomeKey = Number.isInteger(selectedChome) ? String(selectedChome) : '-';
-  const point = selectedTownEntry.points[chomeKey] || selectedTownEntry.defaultPoint;
-  if (!point){
-    alert('辞書に該当する地点が見つかりませんでした');
-    return;
-  }
-  const normalized = buildNormalizedAddress(PREF_NAME, currentWardInfo.label, selectedTownEntry.town, selectedChome);
-  setSearchPin(point.lat, point.lng, normalized);
-}
-
-if (wardInput){
-  wardInput.addEventListener('change', handleWardChange);
-  wardInput.addEventListener('input', () => {
-    if (!wardInput.value.trim()) handleWardChange();
-  });
-  wardInput.addEventListener('blur', handleWardChange);
-}
-
-if (townInput){
-  townInput.addEventListener('input', handleTownInput);
-  townInput.addEventListener('focus', () => {
-    if (townInput.value && townInput.value.length >= 2) handleTownInput();
-  });
-  townInput.addEventListener('keydown', handleTownKeydown);
-}
-
-if (townField){
-  document.addEventListener('click', (event) => {
-    if (!townField.contains(event.target)) hideTownSuggestions();
-  });
-}
-
-addressSearchBtn?.addEventListener('click', confirmSelectedAddress);
-renderChomeChips(null, '区と町を選択してください');
-updateSearchButtonState();
+searchBtn?.addEventListener("click", onSearch);
+searchInput?.addEventListener("keydown", e => { if(e.key==="Enter") onSearch(); });
 
 // 置き換え（最適化ボタン転用部）
-const optimizeBtn = document.getElementById('optimizeBtn');
+const optimizeBtn = document.getElementById('searchBtn');
 if (optimizeBtn) {
+  optimizeBtn.textContent = '最適化';
   optimizeBtn.onclick = () => { if (typeof isFilterOn==='function' && isFilterOn()) return; optimizeRoute(); };
 }
 
@@ -1436,7 +1099,7 @@ function syncFilterButtons() {
 
   // ついでに、フィルターONの間は一部操作を視覚的にも無効化
   const disable = isFilterOn();
-  const idsToToggle = ['openPack','prevPack','nextPack','optimizeBtn','addressSearchBtn']; // パック系のみ見た目無効化（安全）
+  const idsToToggle = ['openPack','prevPack','nextPack','searchBtn']; // パック系のみ見た目無効化（安全）
   idsToToggle.forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
