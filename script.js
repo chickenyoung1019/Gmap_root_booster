@@ -85,6 +85,41 @@ function twoOpt(route,start){
 }
 let route = twoOpt(nearestNeighbor(stores,startEnd), startEnd); // 経由地のみ保持
 
+// ===== 入力正規化ユーティリティ =====
+function normalizeAddressInput(input) {
+  if (!input) return "";
+
+  let s = input.normalize("NFKC");       // 全半角統一
+
+  s = s.replace(/\s+/g, " ").trim();     // 空白圧縮 + トリム
+  s = s.replace(/[‐\-–—―ー−]/g, "-");   // ハイフン類を統一
+  s = s.replace(/[０-９]/g, d => String.fromCharCode(d.charCodeAt(0) - 0xFEE0)); // 全角数字→半角
+  s = s.replace(/〒/g, "");              // 郵便記号を削除
+
+  // 安全な約物を削除（町名でまず出ないやつ）
+  s = s.replace(/[、。．，！？「」『』（）［］〈〉＜＞…・：;]/g, "");
+
+  // 丁目の漢数字→算用数字（例: 三丁目 → 3丁目）
+  s = s.replace(/([一二三四五六七八九十百千]+)丁目/g, (m, kanji) => {
+    return jpNumToInt(kanji) + "丁目";
+  });
+
+  return s;
+}
+
+// 住所文字列 → アンカー要素だけ先に取りたい時用（辞書ヒットまではしない）
+export async function anchorFromAddress(address){
+  const { normalize } = await import("https://esm.sh/@geolonia/normalize-japanese-addresses");
+  const nja = await normalize(address);
+  const city = nja.city || nja.county || "";
+  const ward = TOKYO_WARDS[city];                  // 例: { code:"13102", slug:"chuo", ... }
+  const { town, chome } = townChomeFrom(nja.town); // 例: "銀座", 1
+  const wardCode = ward?.code || "";
+  const anchorKey = `${town}|${chome ?? "-"}`;     // 例: "銀座|1"
+  const anchor = wardCode ? `${wardCode}|${anchorKey}` : "";  // 例: "13102|銀座|1"
+  return { wardCode, anchorKey, anchor, nja };
+}
+
 /* ===== 時間帯フィルター（最小） ===== */
 let currentTwFilter = null; // null=全件, 文字列=その時間帯のみ
 
@@ -143,11 +178,12 @@ function makePinPopupHTML(title='地点'){
     <div class="pin-popup">
       <div class="pin-title">${title}</div>
       <div class="pin-actions">
-        <button class="pin-btn start">出発地</button>
-        <button class="pin-btn via">経由地</button>
-        <button class="pin-btn goal">目的地</button>
-        <button class="pin-btn c">C</button>
-      </div>
+  <button class="pin-btn start">出発地</button>
+  <button class="pin-btn via">経由地</button>
+  <button class="pin-btn goal">目的地</button>
+  <button class="pin-btn c">C</button>
+  <button class="pin-btn gmaps" title="Googleマップで検索">G</button>
+</div>
     </div>`;
 }
 
@@ -215,6 +251,13 @@ function wirePopup(marker, info) {
     const q = (sel) => node.querySelector(sel);
     const getLL = () => marker.getLatLng();
     const label = info?.label || '地点';
+    
+    q('.pin-btn.gmaps')?.addEventListener('click', () => {
+  // ラベル文字そのままで検索。正規化は明示的に無効化
+  const labelText = info?.label || '地点';
+  openInGoogleMapsAddress(labelText, { normalize: false });
+  marker.closePopup();
+});
 
     q('.pin-btn.start')?.addEventListener('click', () => {
       const { lat, lng } = getLL();
@@ -283,9 +326,8 @@ if (info?.kind === 'route') {
   // 1) UIを差し込み
   const host = node.querySelector('.pin-popup') || node; // 既存のポップアップ内4
   const wrap = document.createElement('div');
-  wrap.style.marginTop = '.5rem';
+  wrap.style.marginTop = '.75rem';
   wrap.innerHTML = `
-    <div style="font-weight:700; margin: .25rem 0;">時間帯</div>
     <div class="pin-actions" style="justify-content:flex-start;">
       ${TW_LABELS.map(t => `<button class="pin-btn tw" data-tw="${t}">${t}</button>`).join('')}
       <button class="pin-btn tw" data-tw="">未割当</button>
@@ -427,7 +469,6 @@ function clearAllPins() {
   // 初期ビューへ
   map.setView([startEnd.lat, startEnd.lng], 12);
 }
-
 /* =========================
    下部パネル / リスト描画
    ========================= */
@@ -549,6 +590,7 @@ if (content) {
   // 余白は .tw-strip 側で最小にしているのでここでは不要
   wrap.innerHTML = `
   <div class="tw-strip">
+  <button class="tw-btn gmaps-btn">Gマップ</button>
     ${timeWindows.filter(Boolean).map(t => 
       `<button class="tw-btn ${p.tw===t?'is-active':''}" data-tw="${t}">${t}</button>`
     ).join('')}
@@ -556,6 +598,12 @@ if (content) {
   </div>
 `;
   content.appendChild(wrap);
+  
+  // Gマップボタンのクリック処理を結線
+div.querySelector('.gmaps-btn')?.addEventListener('click', (e) => {
+  e.stopPropagation(); // カード全体のクリック（地図移動）をキャンセル
+  openInGoogleMapsAddress(p.label, { normalize: false }); // ラベルそのままでGoogleマップ検索
+});
 
   const twButtons = wrap.querySelectorAll('.tw-btn');
   twButtons.forEach(btn => {
@@ -690,32 +738,50 @@ function applyHighlight(){
   if (bnds.isValid()) map.fitBounds(bnds.pad(0.2));
 }
 
+// ラベル文字列をそのまま投げる（空白などだけ整形）
+// 正規化したい場合は normalizeAddressInput を呼ぶ
+function pointToMapsParam(pt, { normalize=true } = {}) {
+  if (!pt) return '';
+  const raw = ((pt.label || '') + '').replace(/\s+/g, ' ').trim();
+  return normalize ? (normalizeAddressInput?.(raw) ?? raw) : raw;
+}
+
+// 単一アドレスをそのまま検索タブで開く（必要ならボタン等から呼べる）
+function openInGoogleMapsAddress(addr, { normalize=true } = {}) {
+  const q = normalize ? normalizeAddressInput(addr) : (addr || '');
+  if (!q) return;
+  const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
+  window.open(url, "_blank");
+}
+
 function openPack(){
   const beginIdx = packIndex * packSize;
   const endIdx   = Math.min(beginIdx + packSize, route.length) - 1;
 
-  const toStr = pt => `${pt.lat},${pt.lng}`;
-  const pts   = (beginIdx <= endIdx) ? route.slice(beginIdx, endIdx+1) : [];
+  const toParam = (pt) => pointToMapsParam(pt, { normalize: true }); // ←常にテキスト
 
-  // origin/destination は S/G を優先
+  const pts = (beginIdx <= endIdx) ? route.slice(beginIdx, endIdx+1) : [];
+
   let origin;
-  if (startPoint) origin = toStr(startPoint);
-  else if (packIndex===0 && pts[0]) origin = toStr(pts[0]);
-  else if (packIndex>0 && route[beginIdx-1]) origin = toStr(route[beginIdx-1]);
-  else origin = `${startEnd.lat},${startEnd.lng}`;
+  if (startPoint) origin = toParam(startPoint);
+  else if (packIndex===0 && pts[0]) origin = toParam(pts[0]);
+  else if (packIndex>0 && route[beginIdx-1]) origin = toParam(route[beginIdx-1]);
+  else origin = toParam(startEnd);
 
   let destination;
-  if (goalPoint) destination = toStr(goalPoint);
-  else if (pts.length) destination = toStr(pts[pts.length-1]);
+  if (goalPoint) destination = toParam(goalPoint);
+  else if (pts.length) destination = toParam(pts[pts.length-1]);
   else destination = origin;
 
-  const waypoints = pts.length > 1 ? pts.slice(0,-1).map(toStr).join('|') : '';
-  const url = `https://www.google.com/maps/dir/?api=1` +
-    `&origin=${encodeURIComponent(origin)}` +
-    `&destination=${encodeURIComponent(destination)}` +
-    (waypoints?`&waypoints=${encodeURIComponent(waypoints)}`:'') +
-    `&travelmode=driving`;
-  window.open(url,"_blank");
+  const waypoints = pts.length > 1 ? pts.slice(0,-1).map(toParam).join('|') : '';
+
+  const url = `https://www.google.com/maps/dir/?api=1`
+    + `&origin=${encodeURIComponent(origin)}`
+    + `&destination=${encodeURIComponent(destination)}`
+    + (waypoints ? `&waypoints=${encodeURIComponent(waypoints)}` : '')
+    + `&travelmode=driving`;
+
+  window.open(url, "_blank");
 }
 
 /* =========================
@@ -759,7 +825,6 @@ bulkClose?.addEventListener('click', () => {
     if (ok) bulkInput.value = '';
   });
 })();
-
 // ▼ 「住所だけ抽出」ボタン処理（1件=1〜2行＋区切り線）
 extractBtn?.addEventListener('click', () => {
   const src = bulkInput.value || '';
@@ -918,6 +983,7 @@ const TOKYO_WARDS = {
   "葛飾区":   { code:"13122", slug:"katsushika",label:"葛飾区" },
   "江戸川区": { code:"13123", slug:"edogawa", label:"江戸川区" }
 };
+window.TOKYO_WARDS = TOKYO_WARDS;
 const INDEX_CACHE = {}; // ward.code → 辞書JSON
 
 async function loadWardIndex(pref, city){
@@ -960,17 +1026,23 @@ async function geocodeTokyo23(address){
   const city = nja.city || nja.county || "";
 
   const dict = await loadWardIndex(pref, city);
+  const ward = TOKYO_WARDS[city]; // ← 追加：後続で ward.code を使うため
 
   const { town, chome } = townChomeFrom(nja.town);
   const data = dict.data || {};
   const hit = data[`${town}|${chome ?? "-"}`] || data[`${town}|-|`] || data[`__CITY__|-|-`];
   if (!hit) return { ok:false, reason:"辞書に該当なし" };
 
-  return {
-    ok: true,
-    lat: hit.lat, lng: hit.lng, level: hit.level,
-    label: (nja.town||"") + (chome ? `${chome}丁目` : "")
-  };
+  const wardCode = ward?.code || "";
+   const anchorKey = `${town}|${chome ?? "-"}`;
+   return {
+     ok: true,
+     lat: hit.lat, lng: hit.lng, level: hit.level,
+     label: (nja.town||"") + (chome ? `${chome}丁目` : ""),
+     anchorKey,                      // 例: "銀座|1"
+     wardCode,                       // 例: "13102"
+     anchor: `${wardCode}|${anchorKey}` // 例: "13102|銀座|1"
+   };
 }
 
 // 検索結果ピン（ポップアップ含む）
@@ -1038,12 +1110,26 @@ function setSearchPin(lat,lng,label){
 
 // 検索ボタン/Enter
 async function onSearch(){
-  const q = (searchInput.value || '').trim();
-  if(!q) return;
+  const raw = (searchInput.value || '').trim();
+  if(!raw) return;
+
+  // 正規化を適用
+  const q = normalizeAddressInput(raw);
+
+  // ★検索窓に反映（ここが追加ポイント）
+  searchInput.value = q;
+
   try{
     const r = await geocodeTokyo23(q);
-    if(!r.ok){ alert(r.reason || "見つかりませんでした"); return; }
-    setSearchPin(r.lat, r.lng, `${r.label || "検索地点"}（概算・代表点）`);
+    if(!r.ok){
+      alert(r.reason || "見つかりませんでした");
+      return;
+    }
+    setSearchPin(
+  r.lat,
+  r.lng,
+  `${q}`
+);
   }catch(e){
     console.error(e);
     alert(e.message || "検索に失敗しました");
@@ -1058,7 +1144,6 @@ if (optimizeBtn) {
   optimizeBtn.textContent = '最適化';
   optimizeBtn.onclick = () => { if (typeof isFilterOn==='function' && isFilterOn()) return; optimizeRoute(); };
 }
-
 /* =========================
    ヘッダーボタン連携
    ========================= */
@@ -1118,6 +1203,150 @@ function syncFilterButtons() {
   });
   syncFilterButtons();
 })();
+
+// 予測変換IIFEの先頭あたりに追記
+const wardDictCache = new Map(); // wardCode -> dict JSON
+
+async function getTownChomeList(wardName){
+  const ward = TOKYO_WARDS[wardName];
+  if (!ward) return [];
+  if (!wardDictCache.has(ward.code)) {
+    const dict = await loadWardIndex("東京都", wardName); // 既存関数
+    wardDictCache.set(ward.code, dict);
+  }
+  const data = wardDictCache.get(ward.code)?.data || {};
+  // "町|丁目" / "町|-" を表示用ラベルに変換
+  return Object.keys(data)
+    .filter(k => k !== "__CITY__|-|-")
+    .map(k => {
+      const [town, chome] = k.split("|");
+      return {
+        label: `${town}${(chome && chome !== "-") ? `${chome}丁目` : ""}`,
+        anchorKey: k,
+        wardCode: ward.code,
+        wardName: wardName
+      };
+    });
+}
+
+// ── 区名の予測変換（東京都を最優先で候補に出す） ─────────────────────
+document.addEventListener("DOMContentLoaded", () => {
+  const input = document.getElementById("searchInput");
+  const bar   = document.querySelector(".search-bar");
+  if (!input || !bar || !window.TOKYO_WARDS) return;
+
+  const box = document.createElement("ul");
+  Object.assign(box.style, {
+    position: "absolute",
+    top: "100%",
+    left: 0,
+    right: 0,
+    background: "#fff",
+    border: "1px solid #ccc",
+    borderRadius: "4px",
+    margin: 0,
+    padding: "4px",
+    listStyle: "none",
+    zIndex: 2000,
+    maxHeight: "200px",
+    overflowY: "auto",
+    fontSize: "14px"
+  });
+  box.id = "wardSuggest";
+  box.style.display = "none";
+  bar.appendChild(box);
+
+  const PREF = "東京都";
+  const WARDS = Object.keys(TOKYO_WARDS); // ["千代田区","中央区",...]
+
+  let cur = -1;
+ 
+  // ===============================================
+  // 🚨 修正点 1: サジェスト生成ロジックを関数として独立させる
+  // ===============================================
+
+  /**
+   * 検索入力値に基づいてサジェスト候補を更新するメインロジック。
+   * 入力時、またはサジェスト項目クリック時に直接呼び出される。
+   */
+  async function updateSuggestions() {
+    const q = input.value.trim();
+    box.innerHTML = "";
+    if (!q) { box.style.display = "none"; return; }
+
+    // (ここから、元々 input.addEventListener("input", ...) の中にあったロジックを貼り付け)
+
+    // まずは既存どおり：東京都/区の候補
+    const wardHits = [];
+    if (q === "東") {
+      wardHits.push(...Object.keys(TOKYO_WARDS).map(w => `東京都${w}`));
+    } else if (q === "東京" || q === "東京都" || "東京都".startsWith(q) || q.startsWith("東京都")) {
+      const suffix = q.replace(/^東京都?/, "");
+      wardHits.push(...Object.keys(TOKYO_WARDS).filter(w => !suffix || w.startsWith(suffix)).map(w => `東京都${w}`));
+    } else {
+      wardHits.push(...Object.keys(TOKYO_WARDS).filter(w => w.startsWith(q)).map(w => `東京都${w}`));
+    }
+
+    // ここから拡張：区が確定していれば町・丁目候補に切り替え
+    const m = q.replace(/\s+/g, "").match(/^東京都?([^ ]+?区)(.*)$/);
+    let finalList = wardHits; // デフォルトは従来の区候補
+    if (m) {
+      const wardName = m[1];
+      const after = (m[2] || "");
+      if (TOKYO_WARDS[wardName]) {
+        const cand = await getTownChomeList(wardName);
+        const qTown = after;
+        const starts = cand.filter(c => c.label.startsWith(qTown));
+        const parts  = cand.filter(c => !c.label.startsWith(qTown) && c.label.includes(qTown));
+        const towns  = starts.concat(parts).slice(0, 12);
+        if (towns.length) {
+          // 町・丁目候補が見つかったら、最終候補リストを上書き
+          finalList = towns.map(c => `東京都${wardName}${c.label}`);
+        }
+      }
+    }
+
+    if (!finalList.length) { box.style.display = "none"; return; }
+
+    finalList.forEach(h => {
+      const li = document.createElement("li");
+      li.textContent = h;
+      li.style.padding = "4px 8px";
+      li.style.cursor = "pointer";
+      
+      // ===============================================
+      // 🚨 修正点 2: li.click から dispatchEvent を削除し、関数を直接呼び出す
+      // ===============================================
+li.addEventListener("click", () => {
+  const picked = h.trim();
+  input.value = picked;
+  input.focus(); // キーボード維持
+
+  // 🚨 修正点：updateSuggestions() の呼び出しを setTimeout でラップし、
+  // ブラウザのイベントキューの末尾で実行させることで、非同期処理の衝突を防ぐ。
+  setTimeout(() => {
+    updateSuggestions(); 
+  }, 0); 
+
+  // カーソルを末尾に
+  const end = input.value.length;
+  try { input.setSelectionRange(end, end); } catch (_) {}
+});
+
+      box.appendChild(li);
+    });
+    box.style.display = "block";
+  }; // updateSuggestions 関数の終わり
+
+  // ===============================================
+  // 🚨 修正点 3: input イベントリスナーは関数を呼び出すだけにする
+  // ===============================================
+  input.addEventListener("input", updateSuggestions);
+
+  document.addEventListener("click", (e) => {
+    if (!bar.contains(e.target)) box.style.display = "none";
+  });
+});
 
 /* =========================
    互換用（window公開）
