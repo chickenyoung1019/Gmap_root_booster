@@ -36,6 +36,20 @@ const sameLL = (a,b,eps=1e-7)=> Math.abs(a.lat-b.lat)<eps && Math.abs(a.lng-b.ln
 let startPoint = null; // { lat, lng, label }
 let goalPoint  = null; // { lat, lng, label }
 
+/* ===== 時間帯フィルター制御（統一版） ===== */
+let currentTwFilter = null; // null=全件, 文字列=その時間帯のみ
+
+const isFilterOn = () => currentTwFilter !== null;
+const matchFilter = (p) => !isFilterOn() || p.tw === currentTwFilter;
+
+// フィルター中の操作を制御する関数
+function guardFilter(actionName) {
+  if (!isFilterOn()) return true; // フィルターOFF = 実行OK
+  
+  alert(`時間帯フィルター中は${actionName}できません。\nフィルターを解除してから実行してください。`);
+  return false; // フィルターON = 実行NG
+}
+
 // ルート基点（地図の初期中心用）
 const startEnd = { name:"大田区役所", lat:35.5611, lng:139.7161 };
 
@@ -120,13 +134,15 @@ export async function anchorFromAddress(address){
   return { wardCode, anchorKey, anchor, nja };
 }
 
-/* ===== 時間帯フィルター（最小） ===== */
-let currentTwFilter = null; // null=全件, 文字列=その時間帯のみ
-
-const isFilterOn = () => currentTwFilter !== null;
-const matchFilter = (p) => !isFilterOn() || p.tw === currentTwFilter;
-
+/* ===== 時間帯フィルター切り替え ===== */
 function setTwFilter(twLabel) {
+	// フィルター中の操作を制御する関数（統一版）
+function guardFilter(actionName) {
+  if (!isFilterOn()) return true; // フィルターOFF = 実行OK
+  
+  alert(`時間帯フィルター中は${actionName}できません。\nフィルターを解除してから実行してください。`);
+  return false; // フィルターON = 実行NG
+}
   // 同じボタンをもう一度押したら解除（ON/OFFトグル）
   currentTwFilter = (currentTwFilter === twLabel) ? null : twLabel;
 
@@ -137,6 +153,42 @@ function setTwFilter(twLabel) {
   renderMarkers();
   renderList();
   applyHighlight(); // フィルターON中は中でno-op化
+}
+
+/* ===== 時間帯UI生成（統合版） ===== */
+function createTimeWindowButtons(currentTW, onChange, context = 'list') {
+  // contextで使い分け: 'popup' or 'list'
+  const btnClass = context === 'popup' ? 'pin-btn tw' : 'tw-btn';
+  
+  // 1. HTMLを生成
+  const btns = TW_LABELS.map(tw => {
+    const active = currentTW === tw ? 'is-active' : '';
+    return `<button class="${btnClass} ${active}" data-tw="${tw}">${tw}</button>`;
+  });
+  const unassigned = !currentTW ? 'is-active' : '';
+  btns.push(`<button class="${btnClass} ${unassigned}" data-tw="">未割当</button>`);
+  
+  const html = btns.join('');
+  
+  // 2. イベントを結びつける関数
+  const wire = (container) => {
+    const selector = context === 'popup' ? '.pin-btn.tw' : '.tw-btn';
+    container.querySelectorAll(selector).forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const tw = btn.getAttribute('data-tw') || null;
+        
+        // 見た目の更新（is-activeの付け替え）
+        container.querySelectorAll(selector).forEach(b => b.classList.remove('is-active'));
+        btn.classList.add('is-active');
+        
+        // 外部に通知
+        onChange(tw);
+      });
+    });
+  };
+  
+  return { html, wire };
 }
 
 /* =========================
@@ -178,12 +230,12 @@ function makePinPopupHTML(title='地点'){
     <div class="pin-popup">
       <div class="pin-title">${title}</div>
       <div class="pin-actions">
-  <button class="pin-btn start">出発地</button>
-  <button class="pin-btn via">経由地</button>
-  <button class="pin-btn goal">目的地</button>
-  <button class="pin-btn c">C</button>
-  <button class="pin-btn gmaps" title="Googleマップで検索">G</button>
-</div>
+        <button class="pin-btn start">出発地</button>
+        <button class="pin-btn via">経由地</button>
+        <button class="pin-btn goal">目的地</button>
+        <button class="pin-btn edit" title="編集">✏️</button>
+        <button class="pin-btn delete" title="削除">🗑️</button>
+      </div>
     </div>`;
 }
 
@@ -221,28 +273,6 @@ function setAsGoal(lat, lng, label) {
   map.setView([lat, lng], 15, { animate: true });
 }
 
-function clearPoint(marker, info){
-  const ll = marker.getLatLng();
-
-  if (info?.kind === 'route') {
-    // id優先で消す（フォールバックで座標一致）
-    route = route.filter(p => !(p.id===info.id || sameLL(p, ll)));
-    try { map.removeLayer(marker); } catch(_){}
-    renderMarkers(); renderList(); applyHighlight();
-
-  } else if (info?.kind === 'search') {
-    try { searchLayer.clearLayers(); } catch(_){}
-
-  } else if (info?.kind === 'start') {
-    if (startMarker) { try { map.removeLayer(startMarker); } catch(_){}
-      startMarker=null; startPoint=null; renderList(); }
-
-  } else if (info?.kind === 'goal') {
-    if (goalMarker) { try { map.removeLayer(goalMarker); } catch(_){}
-      goalMarker=null; goalPoint=null; renderList(); }
-  }
-}
-
 // ポップアップのボタンに処理を結びつける
 function wirePopup(marker, info) {
   marker.on('popupopen', (e) => {
@@ -252,14 +282,7 @@ function wirePopup(marker, info) {
     const getLL = () => marker.getLatLng();
     const label = info?.label || '地点';
     
-    q('.pin-btn.gmaps')?.addEventListener('click', () => {
-  // ラベル文字そのままで検索。正規化は明示的に無効化
-  const labelText = info?.label || '地点';
-  openInGoogleMapsAddress(labelText, { normalize: false });
-  marker.closePopup();
-});
-
-    q('.pin-btn.start')?.addEventListener('click', () => {
+        q('.pin-btn.start')?.addEventListener('click', () => {
       const { lat, lng } = getLL();
       // ルート上の点をSに昇格させたら、重複を避けるため除外
       if (AUTO_REMOVE_ROUTE_ON_SET_SG && info?.kind==='route') {
@@ -316,44 +339,47 @@ function wirePopup(marker, info) {
       renderMarkers(); renderList();
       marker.closePopup();
     });
+    
+    q('.pin-btn.edit')?.addEventListener('click', () => {
+      alert('編集機能は準備中です');
+      // TODO: フェーズ3で実装
+    });
 
-    q('.pin-btn.c')?.addEventListener('click', () => {
-      clearPoint(marker, info);
+    q('.pin-btn.delete')?.addEventListener('click', () => {
+      deletePoint(info.kind, info);
       marker.closePopup();
     });
-    // ▼▼ 時間帯（案1：ボタン群）最小追加 ▼▼
+
+        // ▼▼ 時間帯（統合版・経由地のみ） ▼▼
 if (info?.kind === 'route') {
-  // 1) UIを差し込み
-  const host = node.querySelector('.pin-popup') || node; // 既存のポップアップ内4
+  const host = node.querySelector('.pin-popup') || node;
   const wrap = document.createElement('div');
   wrap.style.marginTop = '.75rem';
-  wrap.innerHTML = `
-    <div class="pin-actions" style="justify-content:flex-start;">
-      ${TW_LABELS.map(t => `<button class="pin-btn tw" data-tw="${t}">${t}</button>`).join('')}
-      <button class="pin-btn tw" data-tw="">未割当</button>
-    </div>
-  `;
-  host.appendChild(wrap);
-
-  // 2) クリックで p.tw を更新
-wrap.querySelectorAll('.pin-btn.tw').forEach(btn => {
-  // 初期状態で選択されている時間帯に is-active を付ける
-  if ((info?.tw || "") === btn.getAttribute('data-tw')) {
-    btn.classList.add('is-active');
-  }
-
-  btn.addEventListener('click', () => {
-    const tw = btn.getAttribute('data-tw') || null;
+  
+  // 統合関数を使う（popup用）
+  const twUI = createTimeWindowButtons(info.tw, (tw) => {
     const p = route.find(x => x.id === info.id);
     if (p) p.tw = tw || null;
-
     renderMarkers();
     renderList();
     marker.closePopup();
+  }, 'popup');
+  
+  // Gマップボタンを先頭に追加
+  const gmapsBtn = `<button class="pin-btn tw gmaps-inline" data-label="${info.label}">Gマップ</button>`;
+  wrap.innerHTML = `<div class="pin-actions" style="justify-content:flex-start;">${gmapsBtn}${twUI.html}</div>`;
+  host.appendChild(wrap);
+  
+  // Gマップボタンのイベント
+  wrap.querySelector('.gmaps-inline')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const label = e.target.getAttribute('data-label');
+    openPointInGoogleMaps(label);
   });
-});
+  
+  // 時間帯ボタンのイベント
+  twUI.wire(wrap);
 }
-// ▲▲ ここまで（案1） ▲▲
   });
 }
 
@@ -371,11 +397,41 @@ function addVia(lat, lng, label) {
   renderMarkers(); renderList(); applyHighlight();
 }
 
-function removeRoutePoint(id){
-  route = route.filter(p => p.id !== id);
-  renderMarkers(); renderList(); applyHighlight();
+// 統合版：あらゆる地点を削除する
+function deletePoint(type, data) {
+  switch(type) {
+    case 'route':
+      // 経由地を削除
+      route = route.filter(p => p.id !== data.id);
+      renderMarkers(); renderList(); applyHighlight();
+      break;
+      
+    case 'search':
+      // 検索ピンを削除
+      try { searchLayer.clearLayers(); } catch(_){}
+      break;
+      
+    case 'start':
+      // 出発地を削除
+      if (startMarker) {
+        try { map.removeLayer(startMarker); } catch(_){}
+        startMarker = null;
+        startPoint = null;
+        renderList();
+      }
+      break;
+      
+    case 'goal':
+      // 目的地を削除
+      if (goalMarker) {
+        try { map.removeLayer(goalMarker); } catch(_){}
+        goalMarker = null;
+        goalPoint = null;
+        renderList();
+      }
+      break;
+  }
 }
-
 
 // ルート内のロック（固定）トグル
 function toggleLock(id, force){
@@ -448,7 +504,6 @@ function renderMarkers(){
   map.fitBounds(bounds.pad(0.1));
   applyHighlight();
 }
-
 // すべてのピン（通常・検索・S/G）とリストを削除
 function clearAllPins() {
   // ルートの通常ピン
@@ -469,6 +524,7 @@ function clearAllPins() {
   // 初期ビューへ
   map.setView([startEnd.lat, startEnd.lng], 12);
 }
+
 /* =========================
    下部パネル / リスト描画
    ========================= */
@@ -583,44 +639,34 @@ function renderList(){
 
   <button class="del-btn" aria-label="削除" title="削除">🗑️</button>
 `;
-// ▼▼ 時間帯割当（リスト版・省スペース&横スクロール）▼▼
-const content = div.querySelector('.poi-content');  // 既存本文コンテナ
+// ▼▼ 時間帯割当（リスト版・統合版）▼▼
+const content = div.querySelector('.poi-content');
 if (content) {
   const wrap = document.createElement('div');
-  // 余白は .tw-strip 側で最小にしているのでここでは不要
+  
+  // 統合関数を使う
+  const twUI = createTimeWindowButtons(p.tw, (tw) => {
+    p.tw = tw || null;
+    renderMarkers();
+    renderList();
+  });
+  
+  // Gマップボタン + 時間帯ボタン
   wrap.innerHTML = `
   <div class="tw-strip">
-  <button class="tw-btn gmaps-btn">Gマップ</button>
-    ${timeWindows.filter(Boolean).map(t => 
-      `<button class="tw-btn ${p.tw===t?'is-active':''}" data-tw="${t}">${t}</button>`
-    ).join('')}
-    <button class="tw-btn ${!p.tw?'is-active':''}" data-tw="">未割当</button>
-  </div>
-`;
+    <button class="tw-btn gmaps-btn">Gマップ</button>
+    ${twUI.html}
+  </div>`;
   content.appendChild(wrap);
   
-  // Gマップボタンのクリック処理を結線
-div.querySelector('.gmaps-btn')?.addEventListener('click', (e) => {
-  e.stopPropagation(); // カード全体のクリック（地図移動）をキャンセル
-  openInGoogleMapsAddress(p.label, { normalize: false }); // ラベルそのままでGoogleマップ検索
-});
-
-  const twButtons = wrap.querySelectorAll('.tw-btn');
-  twButtons.forEach(btn => {
-    btn.addEventListener('click', (event) => {
-      event.stopPropagation();
-
-      const twValue = btn.getAttribute('data-tw');
-
-      twButtons.forEach(b => b.classList.remove('is-active'));
-      btn.classList.add('is-active');
-
-      p.tw = twValue ? twValue : null;
-
-      renderMarkers();
-      renderList();
-    });
+  // Gマップボタンのイベント
+  wrap.querySelector('.gmaps-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openPointInGoogleMaps(p.label);
   });
+  
+  // 時間帯ボタンのイベント
+  twUI.wire(wrap);
 }
 // ▲▲ ここまで（リスト版）▲▲
 
@@ -639,8 +685,8 @@ lockBtn.onclick = (e)=>{ e.stopPropagation(); toggleLock(p.id); };
 // ▼ 右端の削除ボタン
 const delBtn = div.querySelector('.del-btn');
 delBtn.onclick = (e) => {
-  e.stopPropagation();  // カードのクリックで地図ジャンプが走らないように
-  removeRoutePoint(p.id);
+  e.stopPropagation();
+  deletePoint('route', { id: p.id });
 };
 
 
@@ -754,6 +800,11 @@ function openInGoogleMapsAddress(addr, { normalize=true } = {}) {
   window.open(url, "_blank");
 }
 
+// 統合版：地点をGoogleマップで開く
+function openPointInGoogleMaps(label) {
+  openInGoogleMapsAddress(label, { normalize: false });
+}
+
 function openPack(){
   const beginIdx = packIndex * packSize;
   const endIdx   = Math.min(beginIdx + packSize, route.length) - 1;
@@ -825,6 +876,7 @@ bulkClose?.addEventListener('click', () => {
     if (ok) bulkInput.value = '';
   });
 })();
+
 // ▼ 「住所だけ抽出」ボタン処理（1件=1〜2行＋区切り線）
 extractBtn?.addEventListener('click', () => {
   const src = bulkInput.value || '';
@@ -950,7 +1002,6 @@ function extractEntries(text){
   }
   return entries;
 }
-
 /* =========================
    検索（@geolonia/nja + 区別辞書）
    ========================= */
@@ -1062,15 +1113,14 @@ function setSearchPin(lat,lng,label){
   return m;
 }
 
-// 検索バーに × を挿入（最適化ボタンと重ならないように動的に右余白を算出）
+// 検索バーに × を挿入（固定位置・最小実装）
 (function initSearchClear(){
   const bar   = document.querySelector('.search-bar');
   const input = document.getElementById('searchInput');
-  const opt   = document.getElementById('searchBtn'); // ← 最適化ボタンに転用済み
   if (!bar || !input) return;
 
   let clearBtn = bar.querySelector('.search-clear');
-  if(!clearBtn){
+  if (!clearBtn) {
     clearBtn = document.createElement('button');
     clearBtn.className = 'search-clear';
     clearBtn.type = 'button';
@@ -1079,18 +1129,12 @@ function setSearchPin(lat,lng,label){
     bar.appendChild(clearBtn);
   }
 
-  // 最適化ボタンの実寸から、×の right を決める
+  // ✕ボタンの位置は固定（70px）
   function placeClear(){
-    // ボタンが無ければ従来の 2.5rem
-    let right = 40; // px
-    if (opt) {
-      const w = Math.ceil(opt.getBoundingClientRect().width); // 実幅
-      right = w - 3; // ボタン幅 + ちょい間隔
-    }
-    clearBtn.style.right = right + 'px';
+    clearBtn.style.right = '70px';
   }
 
-  const toggle = ()=> {
+  const toggle = () => {
     const v = (input.value || '').trim();
     clearBtn.style.display = v ? 'inline-flex' : 'none';
     placeClear();
@@ -1098,11 +1142,18 @@ function setSearchPin(lat,lng,label){
 
   input.addEventListener('input', toggle);
   input.addEventListener('keydown', e => {
-    if(e.key==='Escape'){ input.value=''; input.dispatchEvent(new Event('input')); input.focus(); }
+    if (e.key === 'Escape') {
+      input.value = '';
+      input.dispatchEvent(new Event('input'));
+      input.focus();
+    }
   });
-  clearBtn.addEventListener('click', ()=>{ input.value=''; input.dispatchEvent(new Event('input')); input.focus(); });
+  clearBtn.addEventListener('click', () => {
+    input.value = '';
+    input.dispatchEvent(new Event('input'));
+    input.focus();
+  });
 
-  // リサイズやフォント計測後にも位置を調整
   window.addEventListener('resize', placeClear);
   setTimeout(placeClear, 0);
   toggle();
@@ -1138,20 +1189,34 @@ async function onSearch(){
 searchBtn?.addEventListener("click", onSearch);
 searchInput?.addEventListener("keydown", e => { if(e.key==="Enter") onSearch(); });
 
-// 置き換え（最適化ボタン転用部）
-const optimizeBtn = document.getElementById('searchBtn');
-if (optimizeBtn) {
-  optimizeBtn.textContent = '最適化';
-  optimizeBtn.onclick = () => { if (typeof isFilterOn==='function' && isFilterOn()) return; optimizeRoute(); };
-}
+// 最適化ボタンの結線（統一版）
+document.getElementById('optimizeBtn')?.addEventListener('click', () => {
+  if (!guardFilter('最適化')) return;
+  optimizeRoute();
+});
 /* =========================
    ヘッダーボタン連携
    ========================= */
 
-// 置き換え（既存の3行をこの3行に）
-document.getElementById('openPack').onclick=()=>{ if (typeof isFilterOn==='function' && isFilterOn()) return; openPack(); };
-document.getElementById('nextPack').onclick=()=>{ if (typeof isFilterOn==='function' && isFilterOn()) return; packIndex++; if(packIndex*packSize>=route.length) packIndex=0; applyHighlight(); };
-document.getElementById('prevPack').onclick=()=>{ if (typeof isFilterOn==='function' && isFilterOn()) return; packIndex--; if(packIndex<0) packIndex=Math.floor((route.length-1)/packSize); applyHighlight(); };
+// パック操作ボタン（統一版）
+document.getElementById('openPack').onclick = () => {
+  if (!guardFilter('Googleマップで開く')) return;
+  openPack();
+};
+
+document.getElementById('nextPack').onclick = () => {
+  if (!guardFilter('次の10件')) return;
+  packIndex++;
+  if (packIndex * packSize >= route.length) packIndex = 0;
+  applyHighlight();
+};
+
+document.getElementById('prevPack').onclick = () => {
+  if (!guardFilter('前の10件')) return;
+  packIndex--;
+  if (packIndex < 0) packIndex = Math.floor((route.length - 1) / packSize);
+  applyHighlight();
+};
 
 const clearAllBtn = document.getElementById('clearAll');
 if (clearAllBtn) {
@@ -1182,9 +1247,9 @@ function syncFilterButtons() {
     else el.classList.remove('is-active');
   });
 
-  // ついでに、フィルターONの間は一部操作を視覚的にも無効化
+  // フィルターONの間は操作を視覚的に無効化（統一版）
   const disable = isFilterOn();
-  const idsToToggle = ['openPack','prevPack','nextPack','searchBtn']; // パック系のみ見た目無効化（安全）
+  const idsToToggle = ['openPack', 'prevPack', 'nextPack', 'optimizeBtn'];
   idsToToggle.forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
