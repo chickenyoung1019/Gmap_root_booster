@@ -87,7 +87,6 @@ body { margin:0; padding:0; overflow:hidden; font-family:'Inter',system-ui,-appl
 .pin-btn.start { color: #16a34a; border-color: #bbf7d0; }  /* 出発地 */
 .pin-btn.via   { color: #2563eb; border-color: #bfdbfe; }  /* 経由地 */
 .pin-btn.goal  { color: #ef4444; border-color: #fecaca; }  /* 目的地 */
-.pin-btn.c     { color: #6b7280; }                          /* C（暫定） */
 
 .pin-popup { min-width: 280px; }  /* 240→280で余裕を確保 */
 
@@ -223,10 +222,10 @@ body { margin:0; padding:0; overflow:hidden; font-family:'Inter',system-ui,-appl
   color: #fff !important;
 }
 
-/* フィルター中に無効化する操作（見た目だけ最小） */
+/* フィルター中に無効化する操作（見た目だけ） */
 .header-item.is-disabled {
   opacity: .5;
-  pointer-events: none;
+  cursor: not-allowed;
 }
 
 /* リストカードの時間帯ストリップ（省スペース & 横スクロール） */
@@ -276,21 +275,6 @@ body { margin:0; padding:0; overflow:hidden; font-family:'Inter',system-ui,-appl
   font-weight:600;
 }
 
-.pin-btn.gmaps {
-  background-color: #fff;
-  color: #000;
-  font-weight: bold;
-  border-radius: 6px;
-  padding: 0.3rem 0.6rem;
-
-  border: 3px solid;
-  border-color: #ea4335 #4285f4 #34a853 #fbbc05;
-  /* 上 赤 / 右 青 / 下 緑 / 左 黄 */
-}
-/* 目的地とCボタンとGボタンの間にスペース */
-.pin-btn.goal {margin-right: .5rem; }
-.pin-btn.c {margin-right: .5rem; }
-
 .poi-card .tw-strip .gmaps-btn {
   background-color: #fff;
   color: #000;
@@ -304,4 +288,22 @@ body { margin:0; padding:0; overflow:hidden; font-family:'Inter',system-ui,-appl
 
   line-height: 1;       /* テキスト高さをギュッと詰める */
   font-size: 0.8rem;    /* 時間帯ボタンに近いサイズ */
+}
+
+/* 編集・削除ボタン */
+.pin-btn.edit   { color: #2563eb; }
+.pin-btn.delete { color: #b91c1c; }
+
+/* 目的地と編集ボタンの間にスペース */
+.pin-btn.goal { margin-right: .5rem; }
+
+/* Gマップボタン（インライン版・時間帯と同じスタイル） */
+.pin-btn.gmaps-inline {
+  background-color: #fff;
+  color: #000;
+  font-weight: 500;
+  border-radius: 6px;
+  padding: 0.3rem 0.5rem;
+  border: 2px solid;
+  border-color: #ea4335 #4285f4 #34a853 #fbbc05;
 }
