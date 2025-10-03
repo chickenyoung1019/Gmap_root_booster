@@ -323,8 +323,7 @@ function wirePopup(marker, info) {
     marker.closePopup();
     return;
   }
-
-  // ルートピン/検索ピンは従来通り末尾に追加（重複は addVia 内で無視）
+// ルートピン/検索ピンは従来通り末尾に追加（重複は addVia 内で無視）
   addVia(lat, lng, label);
   marker.closePopup();
 });
@@ -622,7 +621,7 @@ function renderList(){
     listEl.appendChild(s);
   }
 
-  // --- 経由地（ドラッグ可） ---
+// --- 経由地（ドラッグ可） ---
   route.forEach((p,i)=>{
     if (!matchFilter(p)) return; // ← 追加：非対象カードは作らない
 	const div=document.createElement('div');
@@ -1050,7 +1049,6 @@ async function loadWardIndex(pref, city){
   INDEX_CACHE[ward.code] = json;
   return json;
 }
-
 // 町/丁目抽出（漢数字→算用）
 function jpNumToInt(s){
   if(!s) return null;
@@ -1096,20 +1094,68 @@ async function geocodeTokyo23(address){
    };
 }
 
-// 検索結果ピン（ポップアップ含む）
-function setSearchPin(lat,lng,label){
+async function geocodeAndClassify(address) {
+  try {
+    const result = await geocodeTokyo23(address);
+    
+    if (!result.ok) {
+      return { 
+        status: 'FAILED', 
+        label: address, 
+        lat: null, 
+        lng: null 
+      };
+    }
+    
+    // ラベルは常に元の入力住所を使う（番地情報を保持）
+    const label = address;
+    
+    if (result.level === 'chome') {
+      return { status: 'SUCCESS', ...result, label };
+    }
+    
+    // 区まで or その他
+    return { status: 'PARTIAL', ...result, label };
+    
+  } catch (e) {
+    console.error('geocodeAndClassify error:', e);
+    return { 
+      status: 'FAILED', 
+      label: address, 
+      lat: null, 
+      lng: null 
+    };
+  }
+}
+
+// ステータスに応じたバッジを返す
+function getStatusBadge(status) {
+  const badges = {
+    'SUCCESS': '<span class="status-badge status-success">✓</span>',
+    'PARTIAL': '<span class="status-badge status-partial">⚠</span>',
+    'FAILED': '<span class="status-badge status-failed">✗</span>'
+  };
+  return badges[status] || '';
+}
+
+// 検索結果ピン（ポップアップ含む・ステータス対応）
+function setSearchPin(lat, lng, label, status = 'SUCCESS') {
   searchLayer.clearLayers();
-  const title = label || "検索地点";
-  const m = L.marker([lat,lng]).addTo(searchLayer)
+  
+  // ステータスバッジ付きタイトル
+  const badge = getStatusBadge(status);
+  const title = `${label || "検索地点"} ${badge}`;
+  
+  const m = L.marker([lat, lng]).addTo(searchLayer)
     .bindPopup(makePinPopupHTML(title));
 
   // 先に wirePopup を仕込んでから
-  wirePopup(m, { kind: 'search', label: title });
+  wirePopup(m, { kind: 'search', label: label || "検索地点", status });
 
   // その後に openPopup
   m.openPopup();
 
-  map.setView([lat,lng], Math.max(map.getZoom(),15), {animate:true});
+  map.setView([lat, lng], Math.max(map.getZoom(), 15), { animate: true });
   return m;
 }
 
@@ -1159,29 +1205,29 @@ function setSearchPin(lat,lng,label){
   toggle();
 })();
 
-// 検索ボタン/Enter
-async function onSearch(){
+// 検索ボタン/Enter（判定ロジック統合版）
+async function onSearch() {
   const raw = (searchInput.value || '').trim();
-  if(!raw) return;
+  if (!raw) return;
 
   // 正規化を適用
   const q = normalizeAddressInput(raw);
-
-  // ★検索窓に反映（ここが追加ポイント）
   searchInput.value = q;
 
-  try{
-    const r = await geocodeTokyo23(q);
-    if(!r.ok){
-      alert(r.reason || "見つかりませんでした");
+  try {
+    // 共通判定関数を使う
+    const result = await geocodeAndClassify(q);
+    
+    if (result.status === 'FAILED') {
+      alert('座標を取得できませんでした。\n住所を確認するか、後でGoogleマップで開いてください。');
+      // TODO: フェーズ3で「リストに追加」選択肢を提供
       return;
     }
-    setSearchPin(
-  r.lat,
-  r.lng,
-  `${q}`
-);
-  }catch(e){
+    
+    // ピンを立てる（ステータス付き）
+    setSearchPin(result.lat, result.lng, result.label, result.status);
+    
+  } catch (e) {
     console.error(e);
     alert(e.message || "検索に失敗しました");
   }
