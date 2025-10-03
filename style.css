@@ -308,6 +308,15 @@ body { margin:0; padding:0; overflow:hidden; font-family:'Inter',system-ui,-appl
   border-color: #ea4335 #4285f4 #34a853 #fbbc05;
 }
 
+/* ステータスバッジ */
+.status-badge {
+  display: inline-block;
+  margin-left: .5rem;
+  font-size: .9rem;
+  font-weight: 700;
+}
+
 .status-success { color: #22c55e; }    /* 緑 */
 .status-partial { color: #eab308; }    /* 黄 */
 .status-failed { color: #9ca3af; }     /* グレー */
+
