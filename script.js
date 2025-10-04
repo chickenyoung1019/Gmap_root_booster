@@ -240,35 +240,65 @@ function makePinPopupHTML(title='地点'){
 }
 
 // 出発地に設定
-function setAsStart(lat, lng, label) {
-  if (startMarker) map.removeLayer(startMarker);
+function setAsStart(lat, lng, label, status = 'SUCCESS') {
+  
+  // 既存のSを削除
+  if (startMarker) {
+    try { map.removeLayer(startMarker); } catch(_){}
+  }
+  
+  // Gを削除（S→G変換時）
+  if (goalMarker) {
+    try { map.removeLayer(goalMarker); } catch(_){}
+    goalMarker = null;
+    goalPoint = null;
+  }
   startMarker = L.marker([lat, lng], { icon: greenIcon }).addTo(map);
 
+  // バッジ付きタイトル
+  const badge = getStatusBadge(status);
+  const title = `出発：${label} ${badge}`;
+  
   // ボタン付きポップアップ + 先に wire
-  startMarker.bindPopup(makePinPopupHTML("出発：" + label));
-  wirePopup(startMarker, { kind: 'start', label });
+  startMarker.bindPopup(makePinPopupHTML(title));
+  wirePopup(startMarker, { kind: 'start', label, status });
 
   // S バッジ
   startMarker.bindTooltip("S", { permanent: true, direction: 'top', className: 'sg-tip-start' });
 
-  startPoint = { lat, lng, label };
+  startPoint = { lat, lng, label, status };
   renderList();
   map.setView([lat, lng], 15, { animate: true });
 }
 
 // 目的地に設定
-function setAsGoal(lat, lng, label) {
-  if (goalMarker) map.removeLayer(goalMarker);
+function setAsGoal(lat, lng, label, status = 'SUCCESS') {
+  
+  // 既存のGを削除
+  if (goalMarker) {
+    try { map.removeLayer(goalMarker); } catch(_){}
+  }
+  
+  // Sを削除（G→S変換時）
+  if (startMarker) {
+    try { map.removeLayer(startMarker); } catch(_){}
+    startMarker = null;
+    startPoint = null;
+  }
   goalMarker = L.marker([lat, lng], { icon: redIcon }).addTo(map);
 
+  // バッジ付きタイトル
+  const badge = getStatusBadge(status);
+  const title = `到着：${label} ${badge}`;
+  
   // ボタン付きポップアップ + 先に wire
-  goalMarker.bindPopup(makePinPopupHTML("到着：" + label));
-  wirePopup(goalMarker, { kind: 'goal', label });
+  goalMarker.bindPopup(makePinPopupHTML(title));
+  wirePopup(goalMarker, { kind: 'goal', label, status });
 
   // G バッジ
   goalMarker.bindTooltip("G", { permanent: true, direction: 'top', className: 'sg-tip-goal' });
 
-  goalPoint = { lat, lng, label };
+  goalPoint = { lat, lng, label, status };
   renderList();
   map.setView([lat, lng], 15, { animate: true });
 }
@@ -284,13 +314,15 @@ function wirePopup(marker, info) {
     
         q('.pin-btn.start')?.addEventListener('click', () => {
       const { lat, lng } = getLL();
+      
       // ルート上の点をSに昇格させたら、重複を避けるため除外
       if (AUTO_REMOVE_ROUTE_ON_SET_SG && info?.kind==='route') {
         route = route.filter(p => p.id !== info.id);
         try { map.removeLayer(marker); } catch(_){}
       }
-      setAsStart(lat, lng, label);
-      renderMarkers(); renderList(); // 反映
+      
+      setAsStart(lat, lng, label, info?.status || 'SUCCESS');
+      renderMarkers(); renderList();
       marker.closePopup();
     });
 
@@ -324,17 +356,20 @@ function wirePopup(marker, info) {
     return;
   }
 // ルートピン/検索ピンは従来通り末尾に追加（重複は addVia 内で無視）
-  addVia(lat, lng, label);
+  addVia(lat, lng, label, info?.status || 'SUCCESS');
   marker.closePopup();
 });
 
     q('.pin-btn.goal')?.addEventListener('click', () => {
       const { lat, lng } = getLL();
+      
+      // ルート上の点をGに昇格させたら、重複を避けるため除外
       if (AUTO_REMOVE_ROUTE_ON_SET_SG && info?.kind==='route') {
         route = route.filter(p => p.id !== info.id);
         try { map.removeLayer(marker); } catch(_){}
       }
-      setAsGoal(lat, lng, label);
+      
+      setAsGoal(lat, lng, label, info?.status || 'SUCCESS');
       renderMarkers(); renderList();
       marker.closePopup();
     });
@@ -384,14 +419,20 @@ if (info?.kind === 'route') {
 
 
 
-function addVia(lat, lng, label) {
+function addVia(lat, lng, label, status = 'SUCCESS') {
   // 既に同じ座標があるならスキップ（重複防止）
   const dup = route.find(p => sameLL(p, {lat, lng}));
   if (dup) return;
 
   const nextId = Math.max(0, ...route.map(p => p.id || 0)) + 1;
-  route.push({ id: nextId, label: label || '経由地', lat, lng, tw: null });
-  
+  route.push({ 
+    id: nextId, 
+    label: label || '経由地', 
+    lat, 
+    lng, 
+    tw: null,
+    status: status  // ← 追加
+  });
 
   renderMarkers(); renderList(); applyHighlight();
 }
@@ -488,9 +529,13 @@ function renderMarkers(){
 
   // 経由地マーカーを再描画
   route.forEach((p,i)=>{
-     if (!matchFilter(p)) return; // ← 追加：フィルター非対象は描かない
-	const title = `${i+1}. ${p.label}${p.tw?`（⏰${p.tw}）`:""}`;
-    const m = L.marker([p.lat,p.lng]).addTo(map)
+     if (!matchFilter(p)) return;
+     
+     // バッジ付きタイトル
+     const badge = getStatusBadge(p.status || 'SUCCESS');
+     const title = `${i+1}. ${p.label} ${badge}${p.tw?`（⏰${p.tw}）`:""}`;
+     
+     const m = L.marker([p.lat,p.lng]).addTo(map)
       .bindPopup(makePinPopupHTML(title));
     m.bindTooltip(String(i+1), { permanent: true, direction: 'top', className: 'idx-tip', offset: [-10, -4] });
 
@@ -611,17 +656,23 @@ function renderList(){
   if (startPoint) {
     const s = document.createElement('div');
     s.className = 'poi-card';
+    const badge = getStatusBadge(startPoint.status || 'SUCCESS');
     s.innerHTML = `
       <div class="badge" style="background:#22c55e;">S</div>
       <div class="poi-content">
-        <div class="poi-name">出発：${startPoint.label}</div>
+        <div class="poi-name">出発：${startPoint.label} ${badge}</div>
         <div class="poi-meta">（${startPoint.lat.toFixed(5)}, ${startPoint.lng.toFixed(5)}）</div>
-      </div>`;
-    s.onclick = () => map.setView([startPoint.lat, startPoint.lng], 16, {animate:true});
+</div>`;
+    s.onclick = () => {
+      map.setView([startPoint.lat, startPoint.lng], 16, {animate:true});
+      listPanel.classList.remove('open');
+      listPanel.style.transform = 'translateY(calc(100% - 4.5rem))';
+      setTimeout(() => map.invalidateSize(), 80);
+    };
     listEl.appendChild(s);
   }
 
-// --- 経由地（ドラッグ可） ---
+  // --- 経由地（ドラッグ可） ---
   route.forEach((p,i)=>{
     if (!matchFilter(p)) return; // ← 追加：非対象カードは作らない
 	const div=document.createElement('div');
@@ -632,7 +683,7 @@ function renderList(){
 
   <div class="poi-content">
     <div class="poi-name">
-      ${p.label}${p.tw ? `<span class="tw-badge">⏰ ${p.tw}</span>` : ""}
+      ${p.label} ${getStatusBadge(p.status || 'SUCCESS')}${p.tw ? `<span class="tw-badge">⏰ ${p.tw}</span>` : ""}
     </div>
   </div>
 
@@ -740,13 +791,19 @@ if (!DND_ENABLED) {
   if (goalPoint) {
     const g = document.createElement('div');
     g.className = 'poi-card';
+    const badge = getStatusBadge(goalPoint.status || 'SUCCESS');
     g.innerHTML = `
       <div class="badge" style="background:#ef4444;">G</div>
       <div class="poi-content">
-        <div class="poi-name">目的地：${goalPoint.label}</div>
+        <div class="poi-name">目的地：${goalPoint.label} ${badge}</div>
         <div class="poi-meta">（${goalPoint.lat.toFixed(5)}, ${goalPoint.lng.toFixed(5)}）</div>
       </div>`;
-    g.onclick = () => map.setView([goalPoint.lat, goalPoint.lng], 16, {animate:true});
+    g.onclick = () => {
+      map.setView([goalPoint.lat, goalPoint.lng], 16, {animate:true});
+      listPanel.classList.remove('open');
+      listPanel.style.transform = 'translateY(calc(100% - 4.5rem))';
+      setTimeout(() => map.invalidateSize(), 80);
+    };
     listEl.appendChild(g);
   }
 
