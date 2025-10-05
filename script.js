@@ -379,7 +379,38 @@ function wirePopup(marker, info) {
         
         // FAILEDの場合
         if (result.status === 'FAILED') {
-          alert('座標を取得できませんでした。住所を確認してください。');
+          const ok = confirm(
+            `${result.label} ✗\n\n` +
+            `このアプリではヒットしませんでした。\n\n` +
+            `Googleマップでは開ける場合がほとんどです。\n` +
+            `ピンは立ちませんので順番は手動で並び替えてください。\n\n` +
+            `座標なしでリストに追加しますか？`
+          );
+          
+          if (!ok) return;
+          
+          // 座標なしで更新（種類別）
+          if (info.kind === 'search') {
+            // 検索ピンは座標なしでは表示できないので削除
+            alert('検索ピンは座標が必要なため更新できません。');
+            return;
+            
+          } else if (info.kind === 'route') {
+            const p = route.find(x => x.id === info.id);
+            if (p) {
+              p.lat = null;
+              p.lng = null;
+              p.label = result.label;
+              p.status = 'FAILED';
+            }
+            renderMarkers();
+            renderList();
+            
+          } else if (info.kind === 'start' || info.kind === 'goal') {
+            alert('出発地・目的地は座標が必要なため更新できません。');
+            return;
+          }
+          
           return;
         }
         
@@ -458,12 +489,12 @@ if (info?.kind === 'route') {
   });
 }
 
-
-
 function addVia(lat, lng, label, status = 'SUCCESS') {
-  // 既に同じ座標があるならスキップ（重複防止）
-  const dup = route.find(p => sameLL(p, {lat, lng}));
-  if (dup) return;
+  // 座標がある場合のみ重複チェック
+  if (lat !== null && lng !== null) {
+    const dup = route.find(p => sameLL(p, {lat, lng}));
+    if (dup) return;
+  }
 
   const nextId = Math.max(0, ...route.map(p => p.id || 0)) + 1;
   route.push({ 
@@ -571,6 +602,9 @@ function renderMarkers(){
   // 経由地マーカーを再描画
   route.forEach((p,i)=>{
      if (!matchFilter(p)) return;
+     
+     // 座標なし（FAILED）はピンを立てない
+     if (p.lat === null || p.lng === null) return;
      
      // バッジ付きタイトル
      const badge = getStatusBadge(p.status || 'SUCCESS');
@@ -763,7 +797,23 @@ if (content) {
     
     openAddressEditModal(p.label, (result) => {
       if (result.status === 'FAILED') {
-        alert('座標を取得できませんでした。住所を確認してください。');
+        const ok = confirm(
+          `${result.label} ✗\n\n` +
+          `このアプリではヒットしませんでした。\n\n` +
+          `Googleマップでは開ける場合がほとんどです。\n` +
+          `ピンは立ちませんので順番は手動で並び替えてください。\n\n` +
+          `座標なしでリストに追加しますか？`
+        );
+        
+        if (!ok) return;
+        
+        p.lat = null;
+        p.lng = null;
+        p.label = result.label;
+        p.status = 'FAILED';
+        
+        renderMarkers();
+        renderList();
         return;
       }
       
@@ -969,6 +1019,8 @@ const bulkInput = document.getElementById('bulkInput');
 const extractBtn= document.getElementById('extractBtn');
 const addBtn    = document.getElementById('addBtn');
 const bulkClose = document.getElementById('bulkClose');
+// 一括プレビューデータ（ジオコーディング結果を保持）
+let bulkPreviewData = [];
 
 bulkOpen?.addEventListener('click', () => {
   bulkPanel.style.display = 'block';
@@ -979,74 +1031,209 @@ bulkClose?.addEventListener('click', () => {
   setTimeout(()=>map.invalidateSize(), 80);
 });
 
-// ▼ 「C」入力クリアボタンを閉じるボタンの右に動的追加
-(function initBulkClear(){
-  const closeBtn = bulkClose;
-  if (!closeBtn || document.getElementById('bulkClear')) return;
-
-  const cBtn = document.createElement('button');
-  cBtn.id = 'bulkClear';
-  cBtn.type = 'button';
-  cBtn.textContent = 'C';
-  cBtn.title = 'テキスト入力を全て削除';
-  cBtn.className = 'pill'; // 既存の見た目に合わせる（#bulkPanel .pill）
-  cBtn.style.marginLeft = '.25rem';
-
-  closeBtn.insertAdjacentElement('afterend', cBtn);
-
-  cBtn.addEventListener('click', ()=>{
-    if (!bulkInput) return;
-    const ok = confirm('テキスト入力を全て削除しますか？');
-    if (ok) bulkInput.value = '';
-  });
-})();
-
 // ▼ 「住所だけ抽出」ボタン処理（1件=1〜2行＋区切り線）
 extractBtn?.addEventListener('click', () => {
   const src = bulkInput.value || '';
   const ents = extractEntries(src);
-
-  // 区切り線は短めのダッシュ。再抽出時は無視される（DASH_ONLY で除外）
-  const SEP = '――――';
-
-  const blocks = ents.map(e => {
-    const lines = e.addr2 ? [e.addr1, e.addr2] : [e.addr1];
-    return lines.concat(SEP).join('\n'); // 1〜2行＋線
+  
+  if (!ents.length) {
+    alert('住所が見つかりません');
+    return;
+  }
+  
+  // 入力エリアを非表示、プレビューを表示
+  document.getElementById('bulkInputArea').style.display = 'none';
+  document.getElementById('bulkPreview').style.display = 'block';
+  
+  // ボタン表示を切り替え
+  document.getElementById('extractBtn').style.display = 'none';
+  document.getElementById('bulkBack').style.display = 'inline-block';
+  document.getElementById('bulkSelectAll').style.display = 'inline-block';
+  document.getElementById('bulkDeselectAll').style.display = 'inline-block';
+  document.getElementById('bulkDelete').style.display = 'inline-block';
+  document.getElementById('addBtn').style.display = 'inline-block';
+  document.getElementById('bulkClearInput').style.display = 'none'; // C非表示
+  
+  // プレビューリストを生成
+  const previewList = document.getElementById('bulkPreviewList');
+  previewList.innerHTML = '';
+  
+  // プレビューデータを初期化
+  bulkPreviewData = ents.map((e, idx) => {
+    const label = e.addr2 ? `${e.addr1} ${e.addr2}` : e.addr1;
+    return {
+      idx,
+      label,
+      status: 'PENDING', // 初期状態
+      lat: null,
+      lng: null
+    };
   });
-
-  bulkInput.value = blocks.join('\n'); // ブロック同士は改行1つ（=見やすく詰める）
+  
+  // カード生成
+  bulkPreviewData.forEach((item) => {
+    const card = document.createElement('div');
+    card.className = 'bulk-preview-card';
+    card.dataset.idx = item.idx;
+    card.innerHTML = `
+      <input type="checkbox" class="bulk-checkbox" checked data-idx="${item.idx}" />
+      <span class="bulk-address">${item.label} <span class="status-badge">⏳</span></span>
+      <button class="bulk-edit-btn" data-idx="${item.idx}">✏️</button>
+    `;
+    previewList.appendChild(card);
+  });
+  
+  // 編集ボタンのイベント（デリゲーション）
+  previewList.addEventListener('click', (e) => {
+    if (!e.target.classList.contains('bulk-edit-btn')) return;
+    
+    const idx = parseInt(e.target.dataset.idx, 10);
+    const item = bulkPreviewData.find(x => x.idx === idx);
+    if (!item) return;
+    
+    openAddressEditModal(item.label, (result) => {
+      if (result.status === 'FAILED') {
+        const ok = confirm(
+          `${result.label} ✗\n\n` +
+          `このアプリではヒットしませんでした。\n\n` +
+          `Googleマップでは開ける場合がほとんどです。\n` +
+          `ピンは立ちませんので順番は手動で並び替えてください。\n\n` +
+          `座標なしでリストに追加しますか？`
+        );
+        
+        if (!ok) return;
+        
+        item.status = 'FAILED';
+        item.lat = null;
+        item.lng = null;
+        item.label = result.label;
+        
+        const card = document.querySelector(`.bulk-preview-card[data-idx="${idx}"]`);
+        if (card) {
+          const badge = getStatusBadge('FAILED');
+          const addressSpan = card.querySelector('.bulk-address');
+          addressSpan.innerHTML = `${result.label} ${badge}`;
+        }
+        return;
+      }
+      
+      // 結果を保存
+      item.status = result.status;
+      item.lat = result.lat;
+      item.lng = result.lng;
+      item.label = result.label;
+      
+      // カードを更新
+      const card = document.querySelector(`.bulk-preview-card[data-idx="${idx}"]`);
+      if (card) {
+        const badge = getStatusBadge(result.status);
+        const addressSpan = card.querySelector('.bulk-address');
+        addressSpan.innerHTML = `${result.label} ${badge}`;
+      }
+    });
+  });
+  
+  // 自動でジオコーディング開始
+  bulkGeocode();
 });
 
-// ▼ 一括「取り込み」：住所だけをルートに追加（先に即時表示→あとで順次ジオコーディング）
-addBtn?.addEventListener('click', async () => {
-  const src = bulkInput.value || '';
-  const ents = extractEntries(src);      // ← さっき入れた住所抽出（住所1/住所2）
-  if (!ents.length) { alert('住所が見つかりません'); return; }
-
-  const nextIdBase = Math.max(0, ...route.map(x => x.id || 0)) + 1;
-
-  // 1) まずは仮座標で即時追加（UIを素早く更新）
-  const pending = ents.map((e, i) => {
-    const label = e.addr2 ? `${e.addr1} ${e.addr2}` : e.addr1;  // ラベルは連結でOK
-    return { id: nextIdBase + i, label, lat: startEnd.lat, lng: startEnd.lng, tw: null };
-  });
-  route.push(...pending);
-  renderMarkers(); renderList();
-  listPanel.classList.add('open');
-  setTimeout(()=>map.invalidateSize(), 80);
-
-  // 2) 可能なら順次ジオコーディング（東京都23区の辞書 + nja）
-  for (const p of pending) {
+// 一括ジオコーディング処理
+async function bulkGeocode() {
+  for (const item of bulkPreviewData) {
     try {
-      const r = await geocodeTokyo23(p.label);   // 既存の関数をそのまま利用
-      if (r && r.ok) {
-        p.lat = r.lat; p.lng = r.lng;
-        // p.label はユーザー入力重視でそのまま。辞書の r.label を足したいならここで連結可
-        renderMarkers(); // 逐次で位置を反映（重くなるなら最後に1回だけでもOK）
+      const result = await geocodeAndClassify(item.label);
+      
+      // 結果を保存
+      item.status = result.status;
+      item.lat = result.lat;
+      item.lng = result.lng;
+      item.label = result.label; // 正規化後のラベル
+      
+      // カードのバッジを更新
+      const card = document.querySelector(`.bulk-preview-card[data-idx="${item.idx}"]`);
+      if (card) {
+        const badge = getStatusBadge(result.status);
+        const addressSpan = card.querySelector('.bulk-address');
+        addressSpan.innerHTML = `${result.label} ${badge}`;
       }
-    } catch (_) { /* 失敗時は無視（仮座標のまま）*/ }
+      
+    } catch (e) {
+      console.error('ジオコーディングエラー:', e);
+      item.status = 'FAILED';
+      
+      const card = document.querySelector(`.bulk-preview-card[data-idx="${item.idx}"]`);
+      if (card) {
+        const badge = getStatusBadge('FAILED');
+        const addressSpan = card.querySelector('.bulk-address');
+        addressSpan.innerHTML = `${item.label} ${badge}`;
+      }
+    }
   }
-  renderList(); // 最後に整える
+}
+
+// ▼ 一括「取り込み」：住所だけをルートに追加（先に即時表示→あとで順次ジオコーディング）
+addBtn?.addEventListener('click', () => {
+  // チェックされたインデックスを取得
+  const checkedIndexes = Array.from(document.querySelectorAll('.bulk-checkbox:checked'))
+    .map(cb => parseInt(cb.dataset.idx, 10));
+  
+  if (!checkedIndexes.length) {
+    alert('追加する住所を選択してください');
+    return;
+  }
+  
+  // チェック入りのデータのみ取得
+  const selectedItems = bulkPreviewData.filter(item => checkedIndexes.includes(item.idx));
+  
+  // FAILEDが含まれている場合は警告
+  const failedCount = selectedItems.filter(item => item.status === 'FAILED').length;
+  if (failedCount > 0) {
+    const ok = confirm(`${failedCount}件の住所は座標を取得できませんでした。\nこのまま追加しますか？\n（座標なしでもGoogleマップで開けます）`);
+    if (!ok) return;
+  }
+  
+  // ルートに追加
+  const nextIdBase = Math.max(0, ...route.map(x => x.id || 0)) + 1;
+  
+  selectedItems.forEach((item, i) => {
+    route.push({
+      id: nextIdBase + i,
+      label: item.label,
+      lat: item.lat,
+      lng: item.lng,
+      status: item.status,
+      tw: null
+    });
+  });
+  
+  // UI更新
+  renderMarkers();
+  renderList();
+  
+  // リストパネルを開く
+  listPanel.classList.add('open');
+  layoutListPanel();
+  setTimeout(() => map.invalidateSize(), 80);
+  
+  // 一括パネルを閉じる
+  bulkPanel.style.display = 'none';
+  
+  // 入力モードに戻す
+  document.getElementById('bulkPreview').style.display = 'none';
+  document.getElementById('bulkInputArea').style.display = 'block';
+  document.getElementById('extractBtn').style.display = 'inline-block';
+  document.getElementById('bulkBack').style.display = 'none';
+  document.getElementById('bulkSelectAll').style.display = 'none';
+  document.getElementById('bulkDeselectAll').style.display = 'none';
+  document.getElementById('bulkDelete').style.display = 'none'; // ← 追加
+  document.getElementById('addBtn').style.display = 'none';
+  document.getElementById('bulkClearInput').style.display = 'inline-block'; // ← 追加（C表示）
+  
+  // テキストエリアをクリア
+  bulkInput.value = '';
+  
+  // プレビューデータをリセット
+  bulkPreviewData = [];
 });
 
 
@@ -1314,8 +1501,8 @@ function openAddressEditModal(currentAddress, onComplete) {
     searchBtn.textContent = '検索中...';
     statusDiv.textContent = 'ジオコーディング中...';
     statusDiv.style.color = '#6b7280';
-    
-    try {
+
+try {
       // 正規化（検索窓と同じ）
       const normalized = normalizeAddressInput(raw);
       input.value = normalized;
@@ -1535,8 +1722,18 @@ async function onSearch() {
     const result = await geocodeAndClassify(q);
     
     if (result.status === 'FAILED') {
-      alert('座標を取得できませんでした。\n住所を確認するか、後でGoogleマップで開いてください。');
-      // TODO: フェーズ3で「リストに追加」選択肢を提供
+      const ok = confirm(
+        `${result.label} ✗\n\n` +
+        `このアプリではヒットしませんでした。\n\n` +
+        `Googleマップでは開ける場合がほとんどです。\n` +
+        `ピンは立ちませんので順番は手動で並び替えてください。\n\n` +
+        `リストに追加しますか？`
+      );
+      
+      if (!ok) return;
+      
+      // リストに追加（座標なし）
+      addVia(null, null, result.label, 'FAILED');
       return;
     }
     
@@ -1782,3 +1979,62 @@ li.addEventListener("click", () => {
 window.__setSearchResult = (lat,lng,label)=>setSearchPin(lat,lng,label);
 
 window.__fallbackSearch = (q)=>alert("住所正規化モジュールの読み込みに失敗しました。ネット接続 or ローカルサーバーでお試しください。");
+
+// 一括プレビュー：全選択/全解除
+document.getElementById('bulkSelectAll')?.addEventListener('click', () => {
+  document.querySelectorAll('.bulk-checkbox').forEach(cb => cb.checked = true);
+});
+
+document.getElementById('bulkDeselectAll')?.addEventListener('click', () => {
+  document.querySelectorAll('.bulk-checkbox').forEach(cb => cb.checked = false);
+});
+
+// 一括プレビュー：チェック削除
+document.getElementById('bulkDelete')?.addEventListener('click', () => {
+  const checkedIndexes = Array.from(document.querySelectorAll('.bulk-checkbox:checked'))
+    .map(cb => parseInt(cb.dataset.idx, 10));
+  
+  if (!checkedIndexes.length) {
+    alert('削除する住所を選択してください');
+    return;
+  }
+  
+  const ok = confirm(`${checkedIndexes.length}件の住所を削除しますか？`);
+  if (!ok) return;
+  
+  // データから削除
+  bulkPreviewData = bulkPreviewData.filter(item => !checkedIndexes.includes(item.idx));
+  
+  // カードを削除
+  checkedIndexes.forEach(idx => {
+    const card = document.querySelector(`.bulk-preview-card[data-idx="${idx}"]`);
+    if (card) card.remove();
+  });
+  
+  // 全て削除された場合は入力モードに戻る
+  if (!bulkPreviewData.length) {
+    document.getElementById('bulkBack').click();
+  }
+});
+
+// 一括プレビュー：入力モードに戻る
+document.getElementById('bulkBack')?.addEventListener('click', () => {
+  // プレビューを非表示、入力エリアを表示
+  document.getElementById('bulkPreview').style.display = 'none';
+  document.getElementById('bulkInputArea').style.display = 'block';
+  
+  // ボタン表示を元に戻す
+  document.getElementById('extractBtn').style.display = 'inline-block';
+  document.getElementById('bulkBack').style.display = 'none';
+  document.getElementById('bulkSelectAll').style.display = 'none';
+  document.getElementById('bulkDeselectAll').style.display = 'none';
+  document.getElementById('bulkDelete').style.display = 'none';
+  document.getElementById('addBtn').style.display = 'none';
+  document.getElementById('bulkClearInput').style.display = 'inline-block'; // C表示
+});
+
+// 一括入力：Cボタン（入力クリア）
+document.getElementById('bulkClearInput')?.addEventListener('click', () => {
+  const ok = confirm('テキスト入力を全て削除しますか？');
+  if (ok) bulkInput.value = '';
+});
