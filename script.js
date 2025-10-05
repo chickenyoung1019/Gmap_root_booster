@@ -375,13 +375,54 @@ function wirePopup(marker, info) {
     });
     
     q('.pin-btn.edit')?.addEventListener('click', () => {
-      alert('編集機能は準備中です');
-      // TODO: フェーズ3で実装
-    });
-
-    q('.pin-btn.delete')?.addEventListener('click', () => {
-      deletePoint(info.kind, info);
-      marker.closePopup();
+      openAddressEditModal(info?.label || '地点', (result) => {
+        
+        // FAILEDの場合
+        if (result.status === 'FAILED') {
+          alert('座標を取得できませんでした。住所を確認してください。');
+          return;
+        }
+        
+        // 種類別に反映
+        if (info.kind === 'search') {
+          // 検索ピンを更新（検索窓と同じ: ズーム+ポップアップ表示）
+          setSearchPin(result.lat, result.lng, result.label, result.status);
+          
+        } else if (info.kind === 'route') {
+          // 経由地を更新
+          const p = route.find(x => x.id === info.id);
+          if (p) {
+            p.lat = result.lat;
+            p.lng = result.lng;
+            p.label = result.label;
+            p.status = result.status;
+          }
+          renderMarkers();
+          renderList();
+          
+          // ズーム+ポップアップ表示（検索窓と同じ）
+          map.setView([result.lat, result.lng], Math.max(map.getZoom(), 15), { animate: true });
+          // 新しいマーカーのポップアップを開く
+          setTimeout(() => {
+            const newMarker = markers.find((m, idx) => route[idx]?.id === info.id);
+            if (newMarker) newMarker.openPopup();
+          }, 300);
+          
+        } else if (info.kind === 'start') {
+          // 出発地を更新（setAsStart内でズーム済み+ポップアップは自動で出ないので手動で開く）
+          setAsStart(result.lat, result.lng, result.label, result.status);
+          setTimeout(() => {
+            if (startMarker) startMarker.openPopup();
+          }, 300);
+          
+        } else if (info.kind === 'goal') {
+          // 目的地を更新（setAsGoal内でズーム済み+ポップアップは自動で出ないので手動で開く）
+          setAsGoal(result.lat, result.lng, result.label, result.status);
+          setTimeout(() => {
+            if (goalMarker) goalMarker.openPopup();
+          }, 300);
+        }
+        });
     });
 
         // ▼▼ 時間帯（統合版・経由地のみ） ▼▼
@@ -662,7 +703,7 @@ function renderList(){
       <div class="poi-content">
         <div class="poi-name">出発：${startPoint.label} ${badge}</div>
         <div class="poi-meta">（${startPoint.lat.toFixed(5)}, ${startPoint.lng.toFixed(5)}）</div>
-</div>`;
+      </div>`;
     s.onclick = () => {
       map.setView([startPoint.lat, startPoint.lng], 16, {animate:true});
       listPanel.classList.remove('open');
@@ -701,10 +742,11 @@ if (content) {
     renderList();
   });
   
-  // Gマップボタン + 時間帯ボタン
+  // Gマップ + 編集 + 時間帯ボタン
   wrap.innerHTML = `
   <div class="tw-strip">
     <button class="tw-btn gmaps-btn">Gマップ</button>
+    <button class="tw-btn edit-btn">✏️</button>
     ${twUI.html}
   </div>`;
   content.appendChild(wrap);
@@ -712,14 +754,40 @@ if (content) {
   // Gマップボタンのイベント
   wrap.querySelector('.gmaps-btn')?.addEventListener('click', (e) => {
     e.stopPropagation();
-    openPointInGoogleMaps(p.label);
+    openInGoogleMapsAddress(p.label, { normalize: false });
+  });
+  
+  // 編集ボタンのイベント
+  wrap.querySelector('.edit-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    
+    openAddressEditModal(p.label, (result) => {
+      if (result.status === 'FAILED') {
+        alert('座標を取得できませんでした。住所を確認してください。');
+        return;
+      }
+      
+      // 経由地を更新
+      p.lat = result.lat;
+      p.lng = result.lng;
+      p.label = result.label;
+      p.status = result.status;
+      
+      renderMarkers();
+      renderList();
+      
+      // ズーム + ポップアップ表示
+      map.setView([result.lat, result.lng], Math.max(map.getZoom(), 15), { animate: true });
+      setTimeout(() => {
+        const newMarker = markers.find((m, idx) => route[idx]?.id === p.id);
+        if (newMarker) newMarker.openPopup();
+      }, 300);
+    });
   });
   
   // 時間帯ボタンのイベント
   twUI.wire(wrap);
 }
-// ▲▲ ここまで（リスト版）▲▲
-
 
     // ロック表示初期化
 const lockBtn = div.querySelector('.lock-btn');
@@ -1193,6 +1261,197 @@ function getStatusBadge(status) {
     'FAILED': '<span class="status-badge status-failed">✗</span>'
   };
   return badges[status] || '';
+}
+
+// 住所編集モーダルを開く（ステップ1：UI表示のみ）
+function openAddressEditModal(currentAddress, onComplete) {
+  // 既存のモーダルがあれば削除
+  const existing = document.getElementById('edit-modal');
+  if (existing) existing.remove();
+  
+  // モーダル要素を作成
+  const modal = document.createElement('div');
+  modal.id = 'edit-modal';
+  modal.className = 'edit-modal';
+  modal.innerHTML = `
+    <div class="modal-overlay"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <div class="modal-title">住所を編集</div>
+      </div>
+      <div class="modal-body">
+        <input type="text" class="modal-input" value="${currentAddress}" />
+        <div class="modal-status">住所を修正して「再検索」を押してください</div>
+      </div>
+      <div class="modal-actions">
+        <button class="modal-btn cancel">キャンセル</button>
+        <button class="modal-btn search">再検索</button>
+      </div>
+    </div>`;
+  
+  document.body.appendChild(modal);
+  
+  // キャンセルボタン（動作確認用）
+  modal.querySelector('.cancel').onclick = () => {
+    document.body.removeChild(modal);
+  };
+  
+  // 再検索ボタン
+  modal.querySelector('.search').onclick = async () => {
+    const input = modal.querySelector('.modal-input');
+    const statusDiv = modal.querySelector('.modal-status');
+    const searchBtn = modal.querySelector('.search');
+    
+    const raw = (input.value || '').trim();
+    if (!raw) {
+      statusDiv.textContent = '住所を入力してください';
+      statusDiv.style.color = '#ef4444';
+      return;
+    }
+    
+    // ボタンを無効化（二重送信防止）
+    searchBtn.disabled = true;
+    searchBtn.textContent = '検索中...';
+    statusDiv.textContent = 'ジオコーディング中...';
+    statusDiv.style.color = '#6b7280';
+    
+    try {
+      // 正規化（検索窓と同じ）
+      const normalized = normalizeAddressInput(raw);
+      input.value = normalized;
+      
+      // ジオコーディング（検索窓と同じ）
+      const result = await geocodeAndClassify(normalized);
+      
+      // 結果をコールバックで返す
+      onComplete(result);
+      
+      // モーダルを閉じる
+      document.body.removeChild(modal);
+      
+    } catch (e) {
+      console.error(e);
+      statusDiv.textContent = 'エラーが発生しました: ' + (e.message || '不明なエラー');
+      statusDiv.style.color = '#ef4444';
+      searchBtn.disabled = false;
+      searchBtn.textContent = '再検索';
+    }
+  };
+  
+  // オーバーレイクリックで閉じる
+  modal.querySelector('.modal-overlay').onclick = () => {
+    document.body.removeChild(modal);
+  };
+  
+  // Enterキーで再検索
+  modal.querySelector('.modal-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      modal.querySelector('.search').click();
+    }
+  });
+  
+  // サジェスト機能（検索窓と同じ軽量版）
+  const input = modal.querySelector('.modal-input');
+  const suggestBox = document.createElement('ul');
+  Object.assign(suggestBox.style, {
+    position: 'absolute',
+    top: 'calc(100% + 4px)',
+    left: 0,
+    right: 0,
+    background: '#fff',
+    border: '1px solid #e5e7eb',
+    borderRadius: '0.5rem',
+    margin: 0,
+    padding: '4px',
+    listStyle: 'none',
+    zIndex: 10,
+    maxHeight: '200px',
+    overflowY: 'auto',
+    fontSize: '0.875rem',
+    display: 'none'
+  });
+  
+  // input の親要素に position: relative を設定
+  const inputWrapper = input.parentElement;
+  inputWrapper.style.position = 'relative';
+  inputWrapper.appendChild(suggestBox);
+  
+  // サジェスト更新関数（検索窓と同じロジック）
+  async function updateModalSuggestions() {
+    const q = input.value.trim();
+    suggestBox.innerHTML = '';
+    if (!q) { suggestBox.style.display = 'none'; return; }
+    
+    const wardHits = [];
+    if (q === '東') {
+      wardHits.push(...Object.keys(TOKYO_WARDS).map(w => `東京都${w}`));
+    } else if (q === '東京' || q === '東京都' || '東京都'.startsWith(q) || q.startsWith('東京都')) {
+      const suffix = q.replace(/^東京都?/, '');
+      wardHits.push(...Object.keys(TOKYO_WARDS).filter(w => !suffix || w.startsWith(suffix)).map(w => `東京都${w}`));
+    } else {
+      wardHits.push(...Object.keys(TOKYO_WARDS).filter(w => w.startsWith(q)).map(w => `東京都${w}`));
+    }
+    
+    // 区が確定していれば町・丁目候補
+    const m = q.replace(/\s+/g, '').match(/^東京都?([^ ]+?区)(.*)$/);
+    let finalList = wardHits;
+    if (m) {
+      const wardName = m[1];
+      const after = m[2] || '';
+      if (TOKYO_WARDS[wardName]) {
+        const cand = await getTownChomeList(wardName);
+        const qTown = after;
+        const starts = cand.filter(c => c.label.startsWith(qTown));
+        const parts = cand.filter(c => !c.label.startsWith(qTown) && c.label.includes(qTown));
+        const towns = starts.concat(parts).slice(0, 12);
+        if (towns.length) {
+          finalList = towns.map(c => `東京都${wardName}${c.label}`);
+        }
+      }
+    }
+    
+    if (!finalList.length) { suggestBox.style.display = 'none'; return; }
+    
+    finalList.forEach(h => {
+      const li = document.createElement('li');
+      li.textContent = h;
+      li.style.padding = '6px 8px';
+      li.style.cursor = 'pointer';
+      li.style.borderRadius = '0.25rem';
+      
+      li.addEventListener('mouseenter', () => {
+        li.style.background = '#f3f4f6';
+      });
+      li.addEventListener('mouseleave', () => {
+        li.style.background = '';
+      });
+      
+      li.addEventListener('click', () => {
+        input.value = h.trim();
+        input.focus();
+        setTimeout(() => updateModalSuggestions(), 0);
+        const end = input.value.length;
+        try { input.setSelectionRange(end, end); } catch(_) {}
+      });
+      
+      suggestBox.appendChild(li);
+    });
+    suggestBox.style.display = 'block';
+  }
+  
+  input.addEventListener('input', updateModalSuggestions);
+  
+  // モーダル外クリックでサジェストを閉じる
+  modal.addEventListener('click', (e) => {
+    if (!inputWrapper.contains(e.target)) {
+      suggestBox.style.display = 'none';
+    }
+  });
+  
+  // 入力欄にフォーカス
+  setTimeout(() => {
+    modal.querySelector('.modal-input').focus();
+  }, 100);
 }
 
 // 検索結果ピン（ポップアップ含む・ステータス対応）
