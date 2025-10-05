@@ -46,16 +46,28 @@
     <div id="bulkPanel">
       <div class="row">
         <button id="extractBtn" class="pill" style="color:#2563eb;font-weight:600">住所を抽出</button>
-        <button id="addBtn" class="pill">一覧へ追加</button>
+        <button id="bulkBack" class="pill" style="display:none">← 戻る</button>
+        <button id="bulkSelectAll" class="pill" style="display:none">全選択</button>
+        <button id="bulkDeselectAll" class="pill" style="display:none">全解除</button>
+        <button id="bulkDelete" class="pill" style="display:none;color:#ef4444">削除</button>
+        <button id="addBtn" class="pill" style="display:none">一覧へ追加</button>
+        <button id="bulkClearInput" class="pill">C</button>
         <button id="bulkClose" class="pill">閉じる</button>
       </div>
 
-      <textarea id="bulkInput" placeholder="複数住所を行ごとに貼り付け（例）
+      <!-- 入力エリア -->
+      <div id="bulkInputArea">
+        <textarea id="bulkInput" placeholder="複数住所を行ごとに貼り付け（例）
 東京都千代田区丸の内1丁目1-1
 東京都中央区銀座4丁目12-15"></textarea>
+        <div class="row">
+          <small>※ ここにコピペしたテキストから住所だけを抽出します。編集して「一覧へ追加」を押してください。</small>
+        </div>
+      </div>
 
-      <div class="row">
-        <small>※ ここにコピペしたテキストから住所だけを抽出します。編集して「一覧へ追加」を押してください。</small>
+      <!-- プレビューリスト -->
+      <div id="bulkPreview" style="display:none">
+        <div id="bulkPreviewList"></div>
       </div>
     </div>
 
