@@ -533,3 +533,16 @@ body { margin:0; padding:0; overflow:hidden; font-family:'Inter',system-ui,-appl
 .modal-btn.search:hover {
   background: #1d4ed8;
 }
+
+/* ヘルプアイコン */
+.help-icon {
+  font-size: 0.65rem;
+  margin-left: 0.2rem;
+  cursor: help;
+  opacity: 0.7;
+  font-weight: 400;
+}
+
+.help-icon:hover {
+  opacity: 1;
+}
