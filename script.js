@@ -97,7 +97,7 @@ function twoOpt(route,start){
   }
   return best;
 }
-let route = twoOpt(nearestNeighbor(stores,startEnd), startEnd); // 経由地のみ保持
+let route = []; // 空の状態でスタート
 
 // ===== 入力正規化ユーティリティ =====
 function normalizeAddressInput(input) {
@@ -1444,8 +1444,8 @@ async function geocodeAndClassify(address) {
 function getStatusBadge(status) {
   const badges = {
     'SUCCESS': '<span class="status-badge status-success">✓</span>',
-    'PARTIAL': '<span class="status-badge status-partial">⚠</span>',
-    'FAILED': '<span class="status-badge status-failed">✗</span>'
+    'PARTIAL': '<span class="status-badge status-partial">⚠<sup class="help-icon" data-help="partial">ⓘ</sup></span>',
+    'FAILED': '<span class="status-badge status-failed">✗<sup class="help-icon" data-help="failed">ⓘ</sup></span>'
   };
   return badges[status] || '';
 }
@@ -1501,8 +1501,8 @@ function openAddressEditModal(currentAddress, onComplete) {
     searchBtn.textContent = '検索中...';
     statusDiv.textContent = 'ジオコーディング中...';
     statusDiv.style.color = '#6b7280';
-
-try {
+    
+    try {
       // 正規化（検索窓と同じ）
       const normalized = normalizeAddressInput(raw);
       input.value = normalized;
@@ -1557,8 +1557,8 @@ try {
     fontSize: '0.875rem',
     display: 'none'
   });
-  
-  // input の親要素に position: relative を設定
+
+// input の親要素に position: relative を設定
   const inputWrapper = input.parentElement;
   inputWrapper.style.position = 'relative';
   inputWrapper.appendChild(suggestBox);
@@ -2037,4 +2037,28 @@ document.getElementById('bulkBack')?.addEventListener('click', () => {
 document.getElementById('bulkClearInput')?.addEventListener('click', () => {
   const ok = confirm('テキスト入力を全て削除しますか？');
   if (ok) bulkInput.value = '';
+});
+
+// ヘルプアイコンのクリック処理
+document.addEventListener('click', (e) => {
+  if (!e.target.classList.contains('help-icon')) return;
+  
+  e.stopPropagation(); // 親要素のクリックイベントを防ぐ
+  
+  const type = e.target.getAttribute('data-help');
+  
+  const messages = {
+    'partial': 
+      'このアプリでは区の中心点です。\n\n' +
+      '町・丁目まで入れると\n' +
+      'ピンやルートの精度が上がります。',
+    'failed': 
+      'このアプリではヒットしませんでした。\n\n' +
+      'Googleマップでは開ける場合がほとんどです。\n' +
+      'ピンは立ちませんので順番は手動で並び替えてください。'
+  };
+  
+  if (messages[type]) {
+    alert(messages[type]);
+  }
 });
