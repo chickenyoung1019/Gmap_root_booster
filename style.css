@@ -68,16 +68,43 @@ body { margin:0; padding:0; overflow:hidden; font-family:'Inter',system-ui,-appl
   padding: .75rem; display: none;
 }
 #bulkPanel .row { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; margin-bottom:.5rem; }
-#bulkPanel textarea { width:100%; min-height: 30rem; border:1px solid #e5e7eb; border-radius:.5rem; padding:.5rem; font-size:.95rem; }
+#bulkPanel textarea { width:100%; min-height: 37rem; border:1px solid #e5e7eb; border-radius:.5rem; padding:.5rem; font-size:.95rem; }
 #bulkPanel .pill { padding:.4rem .8rem; border:1px solid #dadce0; border-radius:9999px; background:#fff; cursor:pointer; }
 #bulkPanel .pill:hover { background:#f5f7ff; }
 #bulkPanel small { color:#6b7280; }
 
 /* 一括プレビューリスト */
 #bulkPreview {
-  max-height: 25rem;
+  max-height: 40rem;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+}
+
+/* 一括プレビュー：第2ヘッダー（固定） */
+.bulk-subheader {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  gap: .5rem;
+  padding: .5rem .75rem;
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+  margin-bottom: .75rem;
+}
+
+.subheader-btn {
+  padding: .35rem .75rem;
+  font-size: .85rem;
+  border: 1px solid #d1d5db;
+  border-radius: .375rem;
+  background: #fff;
+  cursor: pointer;
+  color: #374151;
+}
+
+.subheader-btn:hover {
+  background: #f3f4f6;
 }
 
 #bulkPreviewList {
