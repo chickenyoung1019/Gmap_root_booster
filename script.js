@@ -517,8 +517,8 @@ function deletePoint(type, data) {
       route = route.filter(p => p.id !== data.id);
       renderMarkers(); renderList(); applyHighlight();
       break;
-      
-    case 'search':
+
+case 'search':
       // 検索ピンを削除
       try { searchLayer.clearLayers(); } catch(_){}
       break;
@@ -1032,14 +1032,26 @@ bulkClose?.addEventListener('click', () => {
 });
 
 // ▼ 「住所だけ抽出」ボタン処理（1件=1〜2行＋区切り線）
-extractBtn?.addEventListener('click', () => {
+extractBtn?.addEventListener('click', async () => {
   const src = bulkInput.value || '';
-  const ents = extractEntries(src);
+  const progressEl = document.getElementById('bulkProgress');
+  
+  // プログレス表示開始
+  progressEl.textContent = '処理中...';
+  
+  const ents = await extractEntries(src, (current, total) => {
+    // 進捗更新コールバック
+    progressEl.textContent = `${current}/${total}`;
+  });
   
   if (!ents.length) {
+    progressEl.textContent = '';
     alert('住所が見つかりません');
     return;
   }
+  
+  // 完了後もそのまま残す（サマリー）
+  progressEl.textContent = `${ents.length}件`;
   
   // 入力エリアを非表示、プレビューを表示
   document.getElementById('bulkInputArea').style.display = 'none';
@@ -1048,11 +1060,8 @@ extractBtn?.addEventListener('click', () => {
   // ボタン表示を切り替え
   document.getElementById('extractBtn').style.display = 'none';
   document.getElementById('bulkBack').style.display = 'inline-block';
-  document.getElementById('bulkSelectAll').style.display = 'inline-block';
-  document.getElementById('bulkDeselectAll').style.display = 'inline-block';
+  document.getElementById('bulkClearInput').style.display = 'none';
   document.getElementById('bulkDelete').style.display = 'inline-block';
-  document.getElementById('addBtn').style.display = 'inline-block';
-  document.getElementById('bulkClearInput').style.display = 'none'; // C非表示
   
   // プレビューリストを生成
   const previewList = document.getElementById('bulkPreviewList');
@@ -1223,94 +1232,69 @@ addBtn?.addEventListener('click', () => {
   document.getElementById('bulkInputArea').style.display = 'block';
   document.getElementById('extractBtn').style.display = 'inline-block';
   document.getElementById('bulkBack').style.display = 'none';
-  document.getElementById('bulkSelectAll').style.display = 'none';
-  document.getElementById('bulkDeselectAll').style.display = 'none';
-  document.getElementById('bulkDelete').style.display = 'none'; // ← 追加
-  document.getElementById('addBtn').style.display = 'none';
-  document.getElementById('bulkClearInput').style.display = 'inline-block'; // ← 追加（C表示）
+  document.getElementById('bulkClearInput').style.display = 'inline-block';
+  document.getElementById('bulkDelete').style.display = 'none';
   
   // テキストエリアをクリア
   bulkInput.value = '';
+  
+  // プログレス表示をクリア
+  document.getElementById('bulkProgress').textContent = '';
   
   // プレビューデータをリセット
   bulkPreviewData = [];
 });
 
 
-// 住所抽出（厳しめ本体 + ゆるめ建物）
-function normalizeLoosely(s){
-  if(!s) return s;
-  return s.normalize('NFKC')
-          .replace(/[ー−―－‐]/g,'-')
-          .replace(/[、，]/g,' ')
-          .replace(/^[\.\。\,、]+/, '')
-          .replace(/\s+/g,' ')
-          .trim();
-}
-
-// 住所コア（厳しめ）：都道府県/東京23区/政令市 + 町丁目 + 番地系
-const PREF = '(?:北海道|(?:京|香|愛)?都|(?:..)?県)'; // ゆるいけど十分
-const TOKYO_23 = '(?:東京都(?:特別)?区|東京都)'; // 実質「東京都」
-const CITY = '(?:市|区|郡|町|村)';
-const TOWN = '.+?'; // 後続で丁目/番地で締める
-const CHOME = '(?:[一二三四五六七八九十〇零\\d]+)丁目';
-const BAN_GO = '(?:\\d{1,3}(?:-\\d{1,3}){0,3})(?:号)?'; // 2-5-10, 12-4-3 など
-const CORE_RE = new RegExp(
-  `^(?:${TOKYO_23}|${PREF}|(?:東京都)?(?:[^\\s]+${CITY}))${TOWN}(?:${CHOME})?\\s*${BAN_GO}\\b`
-);
-
-// 建物キーワード（ゆるめ）
-const BLDG_WORDS = [
-  'ビル','マンション','アパート','ハイツ','コーポ','メゾン','タワー','レジデンス','テラス','ヴィラ','ヒル','サイド',
-  'ヒルズ','ガーデン','パーク','スクエア','シティ','コート','プラザ','ステージ','カレッジ','ハウス'
-];
-const ROOM_TOKENS = [
-  '\\d{1,3}号室','\\d{1,3}[A-Za-z]?-?\\d{0,3}号','\\d{1,2}F','\\d{1,2}階','[A-Z]-?\\d{3}'
-];
-const NAME_NOISE = /(様|御中|宛|部|課|係|受付|レセプション)/;
-
-const BLDG_RE = new RegExp(
-  `(?:${BLDG_WORDS.map(w=>w.replace(/[-/\\^$*+?.()|[\\]{}]/g,'\\$&')).join('|')})|(?:${ROOM_TOKENS.join('|')})`
-);
-
-// 「—」だけ・飾り線
-const DASH_ONLY = /^[—\-－─━_]+$/;
-
-// 1件を { addr1, addr2 } で返す
-function extractEntries(text){
-  const rawLines = (text||'').split(/\r?\n/).map(normalizeLoosely).filter(Boolean);
-  const lines = rawLines.filter(l => !DASH_ONLY.test(l));
-
+// 住所抽出（njaベース・新版）
+async function extractEntries(text, onProgress) {
+  const { normalize } = await import("https://esm.sh/@geolonia/normalize-japanese-addresses");
+  
+  // 前処理：正規化
+  const lines = (text || '')
+    .split(/\r?\n/)
+    .map(line => normalizeAddressInput(line))
+    .filter(line => line && line.length > 5);
+  
   const entries = [];
-  for (let i=0; i<lines.length; i++){
+  const total = lines.length;
+  
+  for (let i = 0; i < lines.length; i++) {
+    // 進捗を通知
+    if (onProgress) onProgress(i + 1, total);
     const line = lines[i];
-
-    // 1) 住所コア
-    if (!CORE_RE.test(line)) continue;
-
-    const entry = { addr1: line, addr2: '' };
-
-    // 2) 直後の1〜2行を見て、建物/部屋なら採用
-    for (let k=1; k<=2 && i+k < lines.length; k++){
-      const nxt = lines[i+k];
-
-      // 氏名/会社 宛の可能性はスキップ（ただしフロア/号室を含むなら拾う）
-      if (NAME_NOISE.test(nxt) && !BLDG_RE.test(nxt)) continue;
-
-      // 都道府県や市区町村をもう一度含む場合は“次の住所”とみなして打ち切り
-      if (CORE_RE.test(nxt)) break;
-
-      if (BLDG_RE.test(nxt)) {
-        entry.addr2 = nxt.replace(/\s+/g,'');
-        i += k; // 消費（1行進める）
-        break;
+    
+    try {
+      // njaで構造化を試みる
+      const nja = await normalize(line);
+      
+      // pref/city/townのいずれかがあれば住所として採用
+      if (nja.pref || nja.city || nja.town) {
+        const entry = { addr1: line, addr2: '' };
+        
+        // 直後の行が建物名の可能性をチェック（オプション）
+        if (i + 1 < lines.length) {
+          const next = lines[i + 1];
+          const nextNja = await normalize(next);
+          
+          // 次の行が新しい住所でなければ建物名として採用
+          if (!nextNja.pref && !nextNja.city && !nextNja.town) {
+            // 氏名・宛名ノイズを除外
+            if (!/様|御中|宛|殿/.test(next)) {
+              entry.addr2 = next;
+              i++; // 次の行を消費
+            }
+          }
+        }
+        
+        entries.push(entry);
       }
-      // 建物名がダッシュ「—」などは無視して続行
-      if (DASH_ONLY.test(nxt)) { i += k; break; }
+    } catch (e) {
+      // njaで解析失敗した行は無視
+      continue;
     }
-
-    entries.push(entry);
   }
+  
   return entries;
 }
 /* =========================
@@ -1443,7 +1427,7 @@ async function geocodeAndClassify(address) {
 // ステータスに応じたバッジを返す
 function getStatusBadge(status) {
   const badges = {
-    'SUCCESS': '<span class="status-badge status-success">✓</span>',
+    'SUCCESS': '<span class="status-badge status-success">✓<sup class="help-icon" data-help="success">ⓘ</sup></span>',
     'PARTIAL': '<span class="status-badge status-partial">⚠<sup class="help-icon" data-help="partial">ⓘ</sup></span>',
     'FAILED': '<span class="status-badge status-failed">✗<sup class="help-icon" data-help="failed">ⓘ</sup></span>'
   };
@@ -1536,8 +1520,8 @@ function openAddressEditModal(currentAddress, onComplete) {
       modal.querySelector('.search').click();
     }
   });
-  
-  // サジェスト機能（検索窓と同じ軽量版）
+
+// サジェスト機能（検索窓と同じ軽量版）
   const input = modal.querySelector('.modal-input');
   const suggestBox = document.createElement('ul');
   Object.assign(suggestBox.style, {
@@ -1557,8 +1541,8 @@ function openAddressEditModal(currentAddress, onComplete) {
     fontSize: '0.875rem',
     display: 'none'
   });
-
-// input の親要素に position: relative を設定
+  
+  // input の親要素に position: relative を設定
   const inputWrapper = input.parentElement;
   inputWrapper.style.position = 'relative';
   inputWrapper.appendChild(suggestBox);
@@ -2017,20 +2001,77 @@ document.getElementById('bulkDelete')?.addEventListener('click', () => {
   }
 });
 
+// 一括プレビュー：全選択/全解除トグル
+document.getElementById('bulkToggleSelect')?.addEventListener('click', (e) => {
+  const btn = e.target;
+  const checkboxes = document.querySelectorAll('.bulk-checkbox');
+  
+  // 現在の状態を確認
+  const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+  
+  if (allChecked) {
+    // 全て選択中 → 全解除
+    checkboxes.forEach(cb => cb.checked = false);
+    btn.textContent = '☐選択';
+  } else {
+    // 一部または全て未選択 → 全選択
+    checkboxes.forEach(cb => cb.checked = true);
+    btn.textContent = '☑選択';
+  }
+});
+
+// 一括プレビュー：新規カード追加
+document.getElementById('bulkAddNew')?.addEventListener('click', () => {
+  // 新しいインデックスを生成
+  const newIdx = bulkPreviewData.length > 0 
+    ? Math.max(...bulkPreviewData.map(item => item.idx)) + 1 
+    : 0;
+  
+  // 空の住所データを追加
+  const newItem = {
+    idx: newIdx,
+    label: '',
+    status: 'PENDING',
+    lat: null,
+    lng: null
+  };
+  
+  bulkPreviewData.push(newItem);
+  
+  // カードを生成
+  const previewList = document.getElementById('bulkPreviewList');
+  const card = document.createElement('div');
+  card.className = 'bulk-preview-card';
+  card.dataset.idx = newIdx;
+  card.innerHTML = `
+    <input type="checkbox" class="bulk-checkbox" checked data-idx="${newIdx}" />
+    <span class="bulk-address">（未入力） <span class="status-badge"></span></span>
+    <button class="bulk-edit-btn" data-idx="${newIdx}">✏️</button>
+  `;
+  
+  previewList.appendChild(card);
+  
+  // 編集ボタンは既存のデリゲーションで動作する
+});
+
 // 一括プレビュー：入力モードに戻る
 document.getElementById('bulkBack')?.addEventListener('click', () => {
   // プレビューを非表示、入力エリアを表示
   document.getElementById('bulkPreview').style.display = 'none';
   document.getElementById('bulkInputArea').style.display = 'block';
   
+  // ☐選択ボタンをリセット
+  const toggleBtn = document.getElementById('bulkToggleSelect');
+  if (toggleBtn) toggleBtn.textContent = '☐選択';
+  
+  // プログレス表示をクリア
+  document.getElementById('bulkProgress').textContent = '';
+  
   // ボタン表示を元に戻す
   document.getElementById('extractBtn').style.display = 'inline-block';
   document.getElementById('bulkBack').style.display = 'none';
-  document.getElementById('bulkSelectAll').style.display = 'none';
-  document.getElementById('bulkDeselectAll').style.display = 'none';
+  document.getElementById('bulkClearInput').style.display = 'inline-block';
   document.getElementById('bulkDelete').style.display = 'none';
-  document.getElementById('addBtn').style.display = 'none';
-  document.getElementById('bulkClearInput').style.display = 'inline-block'; // C表示
 });
 
 // 一括入力：Cボタン（入力クリア）
@@ -2048,6 +2089,14 @@ document.addEventListener('click', (e) => {
   const type = e.target.getAttribute('data-help');
   
   const messages = {
+    'success':
+      '座標がヒットしました。\n\n' +
+      '※このアプリで調べられる座標は\n' +
+      '丁目の中心点まで\n' +
+      '(丁目がない場合は町まで)です。\n\n' +
+      '最終的には住所文字列のまま\n' +
+      'Googleマップへリンクしますので\n' +
+      '文字列をよくご確認ください。',
     'partial': 
       'このアプリでは区の中心点です。\n\n' +
       '町・丁目まで入れると\n' +
