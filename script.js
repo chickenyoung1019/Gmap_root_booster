@@ -1247,55 +1247,94 @@ addBtn?.addEventListener('click', () => {
 
 
 // 住所抽出（njaベース・新版）
-async function extractEntries(text, onProgress) {
+async function extractEntries(text) {
   const { normalize } = await import("https://esm.sh/@geolonia/normalize-japanese-addresses");
   
-  // 前処理：正規化
   const lines = (text || '')
     .split(/\r?\n/)
     .map(line => normalizeAddressInput(line))
-    .filter(line => line && line.length > 5);
+    .filter(line => line && line.length > 3); // 短すぎる行は除外
   
   const entries = [];
-  const total = lines.length;
+  let i = 0;
   
-  for (let i = 0; i < lines.length; i++) {
-    // 進捗を通知
-    if (onProgress) onProgress(i + 1, total);
+  while (i < lines.length) {
     const line = lines[i];
     
     try {
-      // njaで構造化を試みる
       const nja = await normalize(line);
       
-      // pref/city/townのいずれかがあれば住所として採用
-      if (nja.pref || nja.city || nja.town) {
-        const entry = { addr1: line, addr2: '' };
+      // 住所判定：city（区）があればOK
+      if (nja.city) {
+        let addr1 = line;
+        const buildingParts = [];
+        let consumed = 0;
         
-        // 直後の行が建物名の可能性をチェック（オプション）
-        if (i + 1 < lines.length) {
-          const next = lines[i + 1];
-          const nextNja = await normalize(next);
+        // 次の1〜4行をスキャン
+        for (let j = 1; j <= 4 && i + j < lines.length; j++) {
+          const next = lines[i + j];
           
-          // 次の行が新しい住所でなければ建物名として採用
-          if (!nextNja.pref && !nextNja.city && !nextNja.town) {
-            // 氏名・宛名ノイズを除外
-            if (!/様|御中|宛|殿/.test(next)) {
-              entry.addr2 = next;
-              i++; // 次の行を消費
-            }
+          // スキップ条件：郵便番号・配達指示・宛名・電話など
+          if (/^〒|^配達|^到着|^注文|^TEL|^電話|^メモ|^スキャン|様$|御中$|殿$/.test(next)) {
+            break;
+          }
+          
+          // 次の住所が来たら終了
+          try {
+            const nextNja = await normalize(next);
+            if (nextNja.city) break; // 区が出たら次の住所
+          } catch(_) {}
+          
+          // 番地の続き（2-8-12 など）
+          if (/^\d{1,3}-\d/.test(next)) {
+            addr1 += ` ${next}`;
+            consumed = j;
+            continue;
+          }
+          
+          // 建物名・部屋番号
+          if (isBuildingOrRoomLine(next)) {
+            buildingParts.push(next);
+            consumed = j;
           }
         }
         
-        entries.push(entry);
+        // 建物情報を結合
+        const addr2 = buildingParts.join(' ');
+        entries.push({ addr1, addr2 });
+        
+        i += consumed + 1;
+        continue;
       }
+      
+      i++;
+      
     } catch (e) {
-      // njaで解析失敗した行は無視
+      i++;
       continue;
     }
   }
   
   return entries;
+}
+
+// 建物名・部屋番号判定（拡張版）
+function isBuildingOrRoomLine(line) {
+  // 建物キーワード
+  if (/ビル|タワー|マンション|アパート|ハイツ|コーポ|メゾン|ヒルズ|レジデンス|パーク|ガーデン|サイド|ヴィラ/.test(line)) return true;
+  
+  // 部屋番号パターン
+  if (/\d{1,4}号室?$/.test(line)) return true;           // 302号室
+  if (/[A-Z]-\d{1,4}$/.test(line)) return true;          // A-101
+  if (/\d{1,2}[階F]$/.test(line)) return true;           // 12F
+  
+  // 確実に住所ではない（都道府県・区市町村を含まない）
+  if (/東京都|[都道府県]|[区市町村]/.test(line)) return false;
+  
+  // 短い行でカタカナのみ（建物名の可能性）
+  if (line.length < 25 && /^[ァ-ヶー\s]+/.test(line)) return true;
+  
+  return false;
 }
 /* =========================
    検索（@geolonia/nja + 区別辞書）
