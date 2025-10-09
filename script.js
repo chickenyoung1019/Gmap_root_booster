@@ -246,13 +246,6 @@ function setAsStart(lat, lng, label, status = 'SUCCESS') {
   if (startMarker) {
     try { map.removeLayer(startMarker); } catch(_){}
   }
-  
-  // Gを削除（S→G変換時）
-  if (goalMarker) {
-    try { map.removeLayer(goalMarker); } catch(_){}
-    goalMarker = null;
-    goalPoint = null;
-  }
   startMarker = L.marker([lat, lng], { icon: greenIcon }).addTo(map);
 
   // バッジ付きタイトル
@@ -277,13 +270,6 @@ function setAsGoal(lat, lng, label, status = 'SUCCESS') {
   // 既存のGを削除
   if (goalMarker) {
     try { map.removeLayer(goalMarker); } catch(_){}
-  }
-  
-  // Sを削除（G→S変換時）
-  if (startMarker) {
-    try { map.removeLayer(startMarker); } catch(_){}
-    startMarker = null;
-    startPoint = null;
   }
   goalMarker = L.marker([lat, lng], { icon: redIcon }).addTo(map);
 
@@ -314,6 +300,15 @@ function wirePopup(marker, info) {
     
         q('.pin-btn.start')?.addEventListener('click', () => {
       const { lat, lng } = getLL();
+      
+      // G→S変換の場合はGを削除
+      if (info?.kind === 'goal') {
+        if (goalMarker) {
+          try { map.removeLayer(goalMarker); } catch(_){}
+          goalMarker = null;
+          goalPoint = null;
+        }
+      }
       
       // ルート上の点をSに昇格させたら、重複を避けるため除外
       if (AUTO_REMOVE_ROUTE_ON_SET_SG && info?.kind==='route') {
@@ -362,6 +357,15 @@ function wirePopup(marker, info) {
 
     q('.pin-btn.goal')?.addEventListener('click', () => {
       const { lat, lng } = getLL();
+      
+      // S→G変換の場合はSを削除
+      if (info?.kind === 'start') {
+        if (startMarker) {
+          try { map.removeLayer(startMarker); } catch(_){}
+          startMarker = null;
+          startPoint = null;
+        }
+      }
       
       // ルート上の点をGに昇格させたら、重複を避けるため除外
       if (AUTO_REMOVE_ROUTE_ON_SET_SG && info?.kind==='route') {
@@ -455,8 +459,8 @@ function wirePopup(marker, info) {
         }
         });
     });
-
-// 削除ボタン
+    
+    // 削除ボタン
     q('.pin-btn.delete')?.addEventListener('click', () => {
       const ok = confirm('この地点を削除しますか？');
       if (!ok) return;
@@ -526,8 +530,8 @@ function deletePoint(type, data) {
       route = route.filter(p => p.id !== data.id);
       renderMarkers(); renderList(); applyHighlight();
       break;
-
-case 'search':
+      
+    case 'search':
       // 検索ピンを削除
       try { searchLayer.clearLayers(); } catch(_){}
       break;
@@ -542,7 +546,7 @@ case 'search':
       }
       break;
       
-    case 'goal':
+case 'goal':
       // 目的地を削除
       if (goalMarker) {
         try { map.removeLayer(goalMarker); } catch(_){}
@@ -1008,29 +1012,18 @@ function openPointInGoogleMaps(label) {
 
 function openPack(){
   const beginIdx = packIndex * packSize;
-  const endIdx   = Math.min(beginIdx + packSize, route.length) - 1;
+  const pts = route.slice(beginIdx, beginIdx + 10);
 
-  const toParam = (pt) => pointToMapsParam(pt, { normalize: true }); // ←常にテキスト
+  if (!pts.length) return;
 
-  const pts = (beginIdx <= endIdx) ? route.slice(beginIdx, endIdx+1) : [];
+  const toParam = (pt) => pointToMapsParam(pt, { normalize: true });
 
-  let origin;
-  if (startPoint) origin = toParam(startPoint);
-  else if (packIndex===0 && pts[0]) origin = toParam(pts[0]);
-  else if (packIndex>0 && route[beginIdx-1]) origin = toParam(route[beginIdx-1]);
-  else origin = toParam(startEnd);
-
-  let destination;
-  if (goalPoint) destination = toParam(goalPoint);
-  else if (pts.length) destination = toParam(pts[pts.length-1]);
-  else destination = origin;
-
-  const waypoints = pts.length > 1 ? pts.slice(0,-1).map(toParam).join('|') : '';
+  const destination = goalPoint ? toParam(goalPoint) : toParam(pts[pts.length - 1]);
+  const waypoints = pts.map(toParam).join('|');
 
   const url = `https://www.google.com/maps/dir/?api=1`
-    + `&origin=${encodeURIComponent(origin)}`
     + `&destination=${encodeURIComponent(destination)}`
-    + (waypoints ? `&waypoints=${encodeURIComponent(waypoints)}` : '')
+    + `&waypoints=${encodeURIComponent(waypoints)}`
     + `&travelmode=driving`;
 
   window.open(url, "_blank");
@@ -1586,7 +1579,7 @@ function openAddressEditModal(currentAddress, onComplete) {
       modal.querySelector('.search').click();
     }
   });
-
+  
 // サジェスト機能（検索窓と同じ軽量版）
   const input = modal.querySelector('.modal-input');
   const suggestBox = document.createElement('ul');
