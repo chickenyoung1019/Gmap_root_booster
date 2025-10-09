@@ -456,6 +456,15 @@ function wirePopup(marker, info) {
         });
     });
 
+// 削除ボタン
+    q('.pin-btn.delete')?.addEventListener('click', () => {
+      const ok = confirm('この地点を削除しますか？');
+      if (!ok) return;
+      
+      deletePoint(info?.kind, info);
+      marker.closePopup();
+    });
+
         // ▼▼ 時間帯（統合版・経由地のみ） ▼▼
 if (info?.kind === 'route') {
   const host = node.querySelector('.pin-popup') || node;
@@ -737,7 +746,16 @@ function renderList(){
       <div class="poi-content">
         <div class="poi-name">出発：${startPoint.label} ${badge}</div>
         <div class="poi-meta">（${startPoint.lat.toFixed(5)}, ${startPoint.lng.toFixed(5)}）</div>
-      </div>`;
+      </div>
+      <button class="del-btn" aria-label="削除" title="削除">🗑️</button>`;
+    
+    // 削除ボタン
+    const delBtn = s.querySelector('.del-btn');
+    delBtn.onclick = (e) => {
+      e.stopPropagation();
+      const ok = confirm('出発地を削除しますか？');
+      if (ok) deletePoint('start');
+    };
     s.onclick = () => {
       map.setView([startPoint.lat, startPoint.lng], 16, {animate:true});
       listPanel.classList.remove('open');
@@ -915,7 +933,16 @@ if (!DND_ENABLED) {
       <div class="poi-content">
         <div class="poi-name">目的地：${goalPoint.label} ${badge}</div>
         <div class="poi-meta">（${goalPoint.lat.toFixed(5)}, ${goalPoint.lng.toFixed(5)}）</div>
-      </div>`;
+      </div>
+      <button class="del-btn" aria-label="削除" title="削除">🗑️</button>`;
+    
+    // 削除ボタン
+    const delBtn = g.querySelector('.del-btn');
+    delBtn.onclick = (e) => {
+      e.stopPropagation();
+      const ok = confirm('目的地を削除しますか？');
+      if (ok) deletePoint('goal');
+    };
     g.onclick = () => {
       map.setView([goalPoint.lat, goalPoint.lng], 16, {animate:true});
       listPanel.classList.remove('open');
