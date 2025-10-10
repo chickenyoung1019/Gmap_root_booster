@@ -541,9 +541,11 @@ if (info?.kind === 'route') {
 }
 
 function addVia(lat, lng, label, status = 'SUCCESS') {
-  // 座標がある場合のみ重複チェック
+  // 座標とラベルが完全に一致する場合のみ重複とみなす
   if (lat !== null && lng !== null) {
-    const dup = route.find(p => sameLL(p, {lat, lng}));
+    const dup = route.find(p => 
+      sameLL(p, {lat, lng}) && p.label === label
+    );
     if (dup) return;
   }
 
