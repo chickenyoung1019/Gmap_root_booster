@@ -97,6 +97,44 @@ function twoOpt(route,start){
   }
   return best;
 }
+
+// ゴールを考慮した2-opt（S → 経由地 → G の全体距離を最小化）
+function twoOptWithGoal(route, start, goal){
+  // 総距離計算：S → 経由地1 → 経由地2 → ... → G
+  function totalWithGoal(seq){
+    let d = 0;
+    let cur = start;
+    for (const p of seq) {
+      d += haversine(cur, p);
+      cur = p;
+    }
+    d += haversine(cur, goal); // 最後の経由地 → G
+    return d;
+  }
+  
+  let best = route.slice();
+  let bestD = totalWithGoal(best);
+  const n = best.length;
+  let improved = true;
+  
+  while(improved){
+    improved = false;
+    for(let i = 0; i < n - 1; i++){
+      for(let k = i + 1; k < n; k++){
+        const cand = best.slice(0, i).concat(best.slice(i, k + 1).reverse(), best.slice(k + 1));
+        const d = totalWithGoal(cand);
+        if(d + 1e-9 < bestD){
+          best = cand;
+          bestD = d;
+          improved = true;
+        }
+      }
+    }
+  }
+  
+  return best;
+}
+
 let route = []; // 空の状態でスタート
 
 // ===== 入力正規化ユーティリティ =====
@@ -581,24 +619,38 @@ function optimizeRoute(){
     return; // 最適化不要
   }
 
-  // アンカー（起点）
+  // 起点
   const startAnchor = startPoint || unlocked[0];
 
-  // アンカーを起点に unlocked をNN→2-opt
-  let optimizedUnlocked = twoOpt(nearestNeighbor(unlocked, startAnchor), startAnchor);
-
-  // ロック位置を維持したままマージ
-  const merged = new Array(route.length);
-  lockedSlots.forEach(({idx,p}) => merged[idx] = p);
-  let up = 0; // unlocked pointer
-  for (let i=0; i<merged.length; i++){
-    if (!merged[i]) merged[i] = optimizedUnlocked[up++];
+  // ゴールを考慮した最適化
+  if (goalPoint) {
+    // S → 経由地 → G の全体距離を最小化
+    let optimized = twoOptWithGoal(nearestNeighbor(unlocked, startAnchor), startAnchor, goalPoint);
+    
+    // ロック位置を維持してマージ
+    const merged = new Array(route.length);
+    lockedSlots.forEach(({idx,p}) => merged[idx] = p);
+    let up = 0;
+    for (let i=0; i<merged.length; i++){
+      if (!merged[i]) merged[i] = optimized[up++];
+    }
+    route = merged;
+    
+  } else {
+    // Gなし：従来の巡回最適化
+    let optimized = twoOpt(nearestNeighbor(unlocked, startAnchor), startAnchor);
+    
+    const merged = new Array(route.length);
+    lockedSlots.forEach(({idx,p}) => merged[idx] = p);
+    let up = 0;
+    for (let i=0; i<merged.length; i++){
+      if (!merged[i]) merged[i] = optimized[up++];
+    }
+    route = merged;
   }
 
-  route = merged;
   renderMarkers(); renderList(); applyHighlight();
 }
-
 
 /* =========================
    ルート上のマーカー描画
