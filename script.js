@@ -928,9 +928,9 @@ lockBtn.onclick = (e)=>{ e.stopPropagation(); toggleLock(p.id); };
 const delBtn = div.querySelector('.del-btn');
 delBtn.onclick = (e) => {
   e.stopPropagation();
-  deletePoint('route', { id: p.id });
+  const ok = confirm(`${p.label} を削除しますか？`);
+  if (ok) deletePoint('route', { id: p.id });
 };
-
 
 // ロック中はドラッグ系を無効化
 div.addEventListener('dragstart', e=>{ if(p.locked){ e.preventDefault(); return; } e.dataTransfer.setData('text/plain',p.id.toString()); setTimeout(()=>div.style.opacity='.5',0); });
