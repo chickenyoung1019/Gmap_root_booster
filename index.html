@@ -59,11 +59,19 @@
 
       <!-- 入力エリア -->
       <div id="bulkInputArea">
-        <textarea id="bulkInput" placeholder="複数住所を行ごとに貼り付け（例）
-東京都千代田区丸の内1丁目1-1
-東京都中央区銀座4丁目12-15"></textarea>
+        <textarea id="bulkInput" placeholder="配送先リストをそのまま貼り付けてください
+（何件でも可能）
+
+（例）
+〒100-0005
+東京都千代田区丸の内1-1-1
+田中太郎 様
+TEL: 03-1234-5678
+配達指示：インターホン押してください
+
+※ 住所のみ抽出されます"></textarea>
         <div class="row">
-          <small>※ ここにコピペしたテキストから住所だけを抽出します。編集して「一覧へ追加」を押してください。</small>
+          <small>※ ここにコピペしたテキストから住所だけを抽出します。<br>　「住所を抽出」を押してください。</small>
         </div>
       </div>
 
@@ -77,8 +85,11 @@
         
         <div id="bulkPreviewList"></div>
         
-        <div style="display:flex;justify-content:flex-end;margin-top:1rem">
-          <button id="addBtn" class="pill" style="color:#059669;font-weight:600;padding:.6rem 1.5rem">リストへ追加</button>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:1rem;gap:1rem">
+          <small style="color:#6b7280;font-size:.8rem;line-height:1.4;flex:1">
+            ※ 最終的には住所文字列のまま<br>　Googleマップへリンクしますので<br>　よくご確認ください(誤配送防止)
+          </small>
+          <button id="addBtn" class="pill" style="color:#059669;font-weight:600;padding:.6rem 1.5rem;white-space:nowrap">リストへ追加</button>
         </div>
       </div>
     </div>
