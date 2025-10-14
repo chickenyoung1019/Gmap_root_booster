@@ -262,6 +262,46 @@ window.addEventListener('resize',()=>{
 
 const searchLayer = L.layerGroup().addTo(map);
 
+/* =========================
+   地図フォーカス統一関数
+   ========================= */
+
+// 個別地点にフォーカス（Googleマップ風）
+function focusOnPoint(lat, lng, marker = null) {
+  // ズーム：17固定、アニメーションなし
+  map.setView([lat, lng], 17, { animate: false });
+  
+  // リストパネルを閉じる
+  listPanel.classList.remove('open');
+  listPanel.style.transform = 'translateY(calc(100% - 4.5rem))';
+  setTimeout(() => map.invalidateSize(), 80);
+  
+  // ポップアップを開く（マーカーが指定されている場合）
+  if (marker) {
+    setTimeout(() => marker.openPopup(), 100);
+  }
+}
+
+// 全ピンを表示（最適化用）
+function showAllPins() {
+  const bnds = L.latLngBounds([]);
+  
+  // S/Gを含める
+  if (startPoint) bnds.extend([startPoint.lat, startPoint.lng]);
+  if (goalPoint) bnds.extend([goalPoint.lat, goalPoint.lng]);
+  
+  // 全経由地を含める
+  route.forEach(p => {
+    if (p.lat !== null && p.lng !== null) {
+      bnds.extend([p.lat, p.lng]);
+    }
+  });
+  
+  if (bnds.isValid()) {
+    map.fitBounds(bnds.pad(0.1));
+  }
+}
+
 // ポップアップHTML
 function makePinPopupHTML(title='地点'){
   return `
@@ -299,7 +339,9 @@ function setAsStart(lat, lng, label, status = 'SUCCESS') {
 
   startPoint = { lat, lng, label, status };
   renderList();
-  map.setView([lat, lng], 15, { animate: true });
+  
+  // 統一関数を使用
+  focusOnPoint(lat, lng, startMarker);
 }
 
 // 目的地に設定
@@ -324,7 +366,8 @@ function setAsGoal(lat, lng, label, status = 'SUCCESS') {
 
   goalPoint = { lat, lng, label, status };
   renderList();
-  map.setView([lat, lng], 15, { animate: true });
+  // 統一関数を使用
+  focusOnPoint(lat, lng, goalMarker);
 }
 
 // ポップアップのボタンに処理を結びつける
@@ -455,8 +498,8 @@ function wirePopup(marker, info) {
           
           return;
         }
-        
-        // 種類別に反映
+
+// 種類別に反映
         if (info.kind === 'search') {
           // 検索ピンを更新（検索窓と同じ: ズーム+ポップアップ表示）
           setSearchPin(result.lat, result.lng, result.label, result.status);
@@ -473,27 +516,19 @@ function wirePopup(marker, info) {
           renderMarkers();
           renderList();
           
-          // ズーム+ポップアップ表示（検索窓と同じ）
-          map.setView([result.lat, result.lng], Math.max(map.getZoom(), 15), { animate: true });
-          // 新しいマーカーのポップアップを開く
+          // 統一関数を使用
           setTimeout(() => {
             const newMarker = markers.find((m, idx) => route[idx]?.id === info.id);
-            if (newMarker) newMarker.openPopup();
-          }, 300);
+            if (newMarker) focusOnPoint(result.lat, result.lng, newMarker);
+          }, 100);
           
         } else if (info.kind === 'start') {
-          // 出発地を更新（setAsStart内でズーム済み+ポップアップは自動で出ないので手動で開く）
+          // 出発地を更新（統一関数が自動でポップアップを開く）
           setAsStart(result.lat, result.lng, result.label, result.status);
-          setTimeout(() => {
-            if (startMarker) startMarker.openPopup();
-          }, 300);
           
         } else if (info.kind === 'goal') {
-          // 目的地を更新（setAsGoal内でズーム済み+ポップアップは自動で出ないので手動で開く）
+          // 目的地を更新（統一関数が自動でポップアップを開く）
           setAsGoal(result.lat, result.lng, result.label, result.status);
-          setTimeout(() => {
-            if (goalMarker) goalMarker.openPopup();
-          }, 300);
         }
         });
     });
@@ -540,14 +575,34 @@ if (info?.kind === 'route') {
   });
 }
 
-function addVia(lat, lng, label, status = 'SUCCESS') {
-  // 座標とラベルが完全に一致する場合のみ重複とみなす
-  if (lat !== null && lng !== null) {
-    const dup = route.find(p => 
-      sameLL(p, {lat, lng}) && p.label === label
+/* =========================
+   重複チェック（共通関数）
+   ========================= */
+
+// 既存ルートとの重複判定（確認付き）
+function isDuplicateInRoute(lat, lng, label, askUser = true) {
+  if (lat === null || lng === null) return false;
+  
+  const dup = route.find(p => 
+    sameLL(p, {lat, lng}) && p.label === label
+  );
+  
+  if (!dup) return false; // 重複なし
+  
+  // 重複あり：ユーザーに確認
+  if (askUser) {
+    return !confirm(
+      `「${label}」は既に登録されています。\n\n` +
+      `同じ場所を複数回訪問する場合は「OK」を押してください。`
     );
-    if (dup) return;
   }
+  
+  return true; // 確認なしの場合は重複として扱う
+}
+
+function addVia(lat, lng, label, status = 'SUCCESS') {
+  // 重複チェック（共通関数を使用）
+  if (isDuplicateInRoute(lat, lng, label)) return;
 
   const nextId = Math.max(0, ...route.map(p => p.id || 0)) + 1;
   route.push({ 
@@ -556,10 +611,18 @@ function addVia(lat, lng, label, status = 'SUCCESS') {
     lat, 
     lng, 
     tw: null,
-    status: status  // ← 追加
+    status: status
   });
 
-  renderMarkers(); renderList(); applyHighlight();
+  renderMarkers(); renderList();
+  
+  // 座標がある場合のみフォーカス
+  if (lat !== null && lng !== null) {
+    setTimeout(() => {
+      const newMarker = markers[markers.length - 1];
+      focusOnPoint(lat, lng, newMarker);
+    }, 100);
+  }
 }
 
 // 統合版：あらゆる地点を削除する
@@ -586,7 +649,7 @@ function deletePoint(type, data) {
       }
       break;
       
-case 'goal':
+    case 'goal':
       // 目的地を削除
       if (goalMarker) {
         try { map.removeLayer(goalMarker); } catch(_){}
@@ -651,7 +714,12 @@ function optimizeRoute(){
     route = merged;
   }
 
-  renderMarkers(); renderList(); applyHighlight();
+  renderMarkers(); renderList(); 
+  showAllPins(); // 全ピン表示（パック赤枠なし）
+  
+  // パック状態をリセット
+  packIndex = 0;
+  hasShownPack = false;
 }
 
 /* =========================
@@ -686,10 +754,9 @@ function renderMarkers(){
     markers.push(m);
     bounds.extend([p.lat,p.lng]);
   });
-
-  map.fitBounds(bounds.pad(0.1));
-  applyHighlight();
+  // fitBounds は最適化やパック表示の時だけ行う
 }
+
 // すべてのピン（通常・検索・S/G）とリストを削除
 function clearAllPins() {
   // ルートの通常ピン
@@ -708,7 +775,7 @@ function clearAllPins() {
   // パック状態リセット
   packIndex = 0;
   // 初期ビューへ
-  map.setView([startEnd.lat, startEnd.lng], 12);
+  map.setView([startEnd.lat, startEnd.lng], 13);
 }
 
 /* =========================
@@ -803,7 +870,6 @@ function renderList(){
       <div class="badge" style="background:#22c55e;">S</div>
       <div class="poi-content">
         <div class="poi-name">出発：${startPoint.label} ${badge}</div>
-        <div class="poi-meta">（${startPoint.lat.toFixed(5)}, ${startPoint.lng.toFixed(5)}）</div>
       </div>
       <button class="del-btn" aria-label="削除" title="削除">🗑️</button>`;
     
@@ -815,21 +881,25 @@ function renderList(){
       if (ok) deletePoint('start');
     };
     s.onclick = () => {
-      map.setView([startPoint.lat, startPoint.lng], 16, {animate:true});
-      listPanel.classList.remove('open');
-      listPanel.style.transform = 'translateY(calc(100% - 4.5rem))';
-      setTimeout(() => map.invalidateSize(), 80);
+      focusOnPoint(startPoint.lat, startPoint.lng, startMarker);
     };
     listEl.appendChild(s);
   }
 
   // --- 経由地（ドラッグ可） ---
   route.forEach((p,i)=>{
-    if (!matchFilter(p)) return; // ← 追加：非対象カードは作らない
-	const div=document.createElement('div');
+    if (!matchFilter(p)) return;
+    
+    const div=document.createElement('div');
     div.className='poi-card'; div.setAttribute('draggable','true'); div.dataset.id=p.id;
+    
+    // 座標なし（FAILED）の場合はバッジをグレー表示
+    const badgeStyle = (p.lat === null || p.lng === null) 
+      ? 'background:#9ca3af;color:#fff' 
+      : 'background:#4285F4;color:#fff';
+    
     div.innerHTML = `
-  <div class="badge" id="badge-${i}">${i+1}</div>
+  <div class="badge" id="badge-${i}" style="${badgeStyle}">${i+1}</div>
   <button class="lock-btn" aria-label="固定/解除" title="固定/解除">🔓</button>
 
   <div class="poi-content">
@@ -902,12 +972,11 @@ if (content) {
       renderMarkers();
       renderList();
       
-      // ズーム + ポップアップ表示
-      map.setView([result.lat, result.lng], Math.max(map.getZoom(), 15), { animate: true });
+      // 統一関数を使用
       setTimeout(() => {
         const newMarker = markers.find((m, idx) => route[idx]?.id === p.id);
-        if (newMarker) newMarker.openPopup();
-      }, 300);
+        if (newMarker) focusOnPoint(result.lat, result.lng, newMarker);
+      }, 100);
     });
   });
   
@@ -934,17 +1003,19 @@ delBtn.onclick = (e) => {
   if (ok) deletePoint('route', { id: p.id });
 };
 
+
 // ロック中はドラッグ系を無効化
 div.addEventListener('dragstart', e=>{ if(p.locked){ e.preventDefault(); return; } e.dataTransfer.setData('text/plain',p.id.toString()); setTimeout(()=>div.style.opacity='.5',0); });
 div.addEventListener('dragover', e=>{ if(p.locked){ return; } e.preventDefault(); div.classList.add('drag-over'); });
 
 
     // カードクリックで地図へジャンプ
-    div.onclick=()=>{ map.setView([p.lat,p.lng],16,{animate:true});
-      listPanel.classList.remove('open'); listPanel.style.transform='translateY(calc(100% - 4.5rem))';
-      setTimeout(()=>map.invalidateSize(),80); };
+    div.onclick=()=>{ 
+      const marker = markers.find((m, idx) => route[idx]?.id === p.id);
+      focusOnPoint(p.lat, p.lng, marker);
+    };
 
-    // --- フィルターON中は DnD 停止、OFFの時だけ DnD を有効化 ---
+// --- フィルターON中は DnD 停止、OFFの時だけ DnD を有効化 ---
 const DND_ENABLED = !isFilterOn();
 
 if (!DND_ENABLED) {
@@ -990,7 +1061,6 @@ if (!DND_ENABLED) {
       <div class="badge" style="background:#ef4444;">G</div>
       <div class="poi-content">
         <div class="poi-name">目的地：${goalPoint.label} ${badge}</div>
-        <div class="poi-meta">（${goalPoint.lat.toFixed(5)}, ${goalPoint.lng.toFixed(5)}）</div>
       </div>
       <button class="del-btn" aria-label="削除" title="削除">🗑️</button>`;
     
@@ -1002,15 +1072,11 @@ if (!DND_ENABLED) {
       if (ok) deletePoint('goal');
     };
     g.onclick = () => {
-      map.setView([goalPoint.lat, goalPoint.lng], 16, {animate:true});
-      listPanel.classList.remove('open');
-      listPanel.style.transform = 'translateY(calc(100% - 4.5rem))';
-      setTimeout(() => map.invalidateSize(), 80);
+      focusOnPoint(goalPoint.lat, goalPoint.lng, goalMarker);
     };
     listEl.appendChild(g);
   }
 
-    applyHighlight();
   if (listPanel.classList.contains('open')) layoutListPanel();
 
   // ★ 追加：自動スクロールを一度だけバインド
@@ -1022,6 +1088,7 @@ if (!DND_ENABLED) {
    ========================= */
 
 let packIndex=0; const packSize=10;
+let hasShownPack = false; // パック表示フラグ
 
 function applyHighlight(){
  if (isFilterOn()) return; // ← 追加：フィルター中はパック強調を無効化（安全最小） // 見た目の強調
@@ -1072,15 +1139,18 @@ function openPack(){
 
   const toParam = (pt) => pointToMapsParam(pt, { normalize: true });
 
-  const destination = goalPoint ? toParam(goalPoint) : toParam(pts[pts.length - 1]);
+  const origin = (packIndex === 0 && startPoint) ? toParam(startPoint) : (packIndex > 0 ? toParam(route[beginIdx - 1]) : undefined);
+  const destination = (beginIdx + 10 >= route.length && goalPoint) ? toParam(goalPoint) : toParam(pts[pts.length - 1]);
   const waypoints = pts.map(toParam).join('|');
 
   const url = `https://www.google.com/maps/dir/?api=1`
+    + (origin ? `&origin=${encodeURIComponent(origin)}` : '')
     + `&destination=${encodeURIComponent(destination)}`
     + `&waypoints=${encodeURIComponent(waypoints)}`
     + `&travelmode=driving`;
 
   window.open(url, "_blank");
+  packIndex++; applyHighlight();
 }
 
 /* =========================
@@ -1268,6 +1338,22 @@ addBtn?.addEventListener('click', () => {
   // チェック入りのデータのみ取得
   const selectedItems = bulkPreviewData.filter(item => checkedIndexes.includes(item.idx));
   
+  // 重複チェック
+  const duplicates = selectedItems.filter(item => 
+    isDuplicateInRoute(item.lat, item.lng, item.label, false)
+  );
+  
+  // 重複があれば確認
+  if (duplicates.length > 0) {
+    const dupList = duplicates.map(d => d.label).join('\n');
+    const ok = confirm(
+      `以下の住所は既に登録されています：\n\n${dupList}\n\n` +
+      `同じ場所を複数回訪問する場合は「OK」を押してください。`
+    );
+    
+    if (!ok) return; // キャンセル → プレビューモードに戻る
+  }
+  
   // FAILEDが含まれている場合は警告
   const failedCount = selectedItems.filter(item => item.status === 'FAILED').length;
   if (failedCount > 0) {
@@ -1292,6 +1378,9 @@ addBtn?.addEventListener('click', () => {
   // UI更新
   renderMarkers();
   renderList();
+  
+  // 全ピンを表示
+  showAllPins();
   
   // リストパネルを開く
   listPanel.classList.add('open');
@@ -1389,6 +1478,29 @@ async function extractEntries(text) {
     }
   }
   
+  // 同じテキスト内での重複をチェック
+  const seen = new Map();
+  const duplicates = [];
+  
+  for (const entry of entries) {
+    const key = `${entry.addr1}|${entry.addr2 || ''}`;
+    if (seen.has(key)) {
+      duplicates.push(entry.addr1 + (entry.addr2 ? ` ${entry.addr2}` : ''));
+    } else {
+      seen.set(key, true);
+    }
+  }
+  
+  // 重複があれば通知
+  if (duplicates.length > 0) {
+    alert(
+      `以下の${duplicates.length}件は同じテキスト内で重複しています：\n\n` +
+      duplicates.join('\n') +
+      `\n\n不要な場合はチェックを外してください。`
+    );
+  }
+  
+  // 重複も含めてすべて返す（ユーザーが判断）
   return entries;
 }
 
@@ -1634,7 +1746,7 @@ function openAddressEditModal(currentAddress, onComplete) {
     }
   });
   
-// サジェスト機能（検索窓と同じ軽量版）
+  // サジェスト機能（検索窓と同じ軽量版）
   const input = modal.querySelector('.modal-input');
   const suggestBox = document.createElement('ul');
   Object.assign(suggestBox.style, {
@@ -1752,10 +1864,8 @@ function setSearchPin(lat, lng, label, status = 'SUCCESS') {
   // 先に wirePopup を仕込んでから
   wirePopup(m, { kind: 'search', label: label || "検索地点", status });
 
-  // その後に openPopup
-  m.openPopup();
-
-  map.setView([lat, lng], Math.max(map.getZoom(), 15), { animate: true });
+  // 統一関数を使用
+  focusOnPoint(lat, lng, m);
   return m;
 }
 
@@ -1862,8 +1972,15 @@ document.getElementById('openPack').onclick = () => {
 
 document.getElementById('nextPack').onclick = () => {
   if (!guardFilter('次の10件')) return;
-  packIndex++;
-  if (packIndex * packSize >= route.length) packIndex = 0;
+  
+  // 初回は0からスタート、2回目以降は+1
+  if (packIndex === 0 && !hasShownPack) {
+    hasShownPack = true;
+  } else {
+    packIndex++;
+    if (packIndex * packSize >= route.length) packIndex = 0;
+  }
+  
   applyHighlight();
 };
 
