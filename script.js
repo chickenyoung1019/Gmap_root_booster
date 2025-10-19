@@ -2,6 +2,50 @@
    グローバル設定とユーティリティ
    ========================= */
 
+/* =========================
+   一都六県対応：エリアデータ読み込み
+   ========================= */
+
+// エリアデータのキャッシュ
+let AREAS_DATA = null;
+
+// 都道府県コードからslugを取得
+function getPrefSlug(prefCode) {
+  const slugMap = {
+    "08": "ibaraki",
+    "09": "tochigi",
+    "10": "gunma",
+    "11": "saitama",
+    "12": "chiba",
+    "13": "tokyo",
+    "14": "kanagawa"
+  };
+  return slugMap[prefCode] || "";
+}
+
+// areas.jsonを読み込む関数
+async function loadAreasData() {
+  if (AREAS_DATA) return AREAS_DATA;
+  const res = await fetch('indexes/areas.json', { cache: "force-cache" });
+  if (!res.ok) throw new Error('areas.jsonが読み込めません');
+  const json = await res.json();
+  
+  // 構造を変換
+  AREAS_DATA = {
+    prefectures: Object.entries(json).map(([code, data]) => ({
+      code: code,
+      name: data.name,
+      cities: Object.entries(data.areas).map(([cityName, cityData]) => ({
+        name: cityName,
+        code: cityData.code,
+        slug: cityData.slug
+      }))
+    }))
+  };
+  
+  return AREAS_DATA;
+}
+
 // Leaflet カラーピン（緑/赤）
 const greenIcon = new L.Icon({
   iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png',
@@ -157,19 +201,6 @@ function normalizeAddressInput(input) {
   });
 
   return s;
-}
-
-// 住所文字列 → アンカー要素だけ先に取りたい時用（辞書ヒットまではしない）
-export async function anchorFromAddress(address){
-  const { normalize } = await import("https://esm.sh/@geolonia/normalize-japanese-addresses");
-  const nja = await normalize(address);
-  const city = nja.city || nja.county || "";
-  const ward = TOKYO_WARDS[city];                  // 例: { code:"13102", slug:"chuo", ... }
-  const { town, chome } = townChomeFrom(nja.town); // 例: "銀座", 1
-  const wardCode = ward?.code || "";
-  const anchorKey = `${town}|${chome ?? "-"}`;     // 例: "銀座|1"
-  const anchor = wardCode ? `${wardCode}|${anchorKey}` : "";  // 例: "13102|銀座|1"
-  return { wardCode, anchorKey, anchor, nja };
 }
 
 /* ===== 時間帯フィルター切り替え ===== */
@@ -1529,45 +1560,28 @@ function isBuildingOrRoomLine(line) {
 const searchBtn = document.getElementById('searchBtn');
 const searchInput = document.getElementById('searchInput');
 
-const TOKYO_WARDS = {
-  "千代田区": { code:"13101", slug:"chiyoda",  label:"千代田区" },
-  "中央区":   { code:"13102", slug:"chuo",     label:"中央区" },
-  "港区":     { code:"13103", slug:"minato",   label:"港区" },
-  "新宿区":   { code:"13104", slug:"shinjuku", label:"新宿区" },
-  "文京区":   { code:"13105", slug:"bunkyo",   label:"文京区" },
-  "台東区":   { code:"13106", slug:"taito",    label:"台東区" },
-  "墨田区":   { code:"13107", slug:"sumida",   label:"墨田区" },
-  "江東区":   { code:"13108", slug:"koto",     label:"江東区" },
-  "品川区":   { code:"13109", slug:"shinagawa",label:"品川区" },
-  "目黒区":   { code:"13110", slug:"meguro",   label:"目黒区" },
-  "大田区":   { code:"13111", slug:"ota",      label:"大田区" },
-  "世田谷区": { code:"13112", slug:"setagaya", label:"世田谷区" },
-  "渋谷区":   { code:"13113", slug:"shibuya",  label:"渋谷区" },
-  "中野区":   { code:"13114", slug:"nakano",   label:"中野区" },
-  "杉並区":   { code:"13115", slug:"suginami", label:"杉並区" },
-  "豊島区":   { code:"13116", slug:"toshima",  label:"豊島区" },
-  "北区":     { code:"13117", slug:"kita",     label:"北区" },
-  "荒川区":   { code:"13118", slug:"arakawa",  label:"荒川区" },
-  "板橋区":   { code:"13119", slug:"itabashi", label:"板橋区" },
-  "練馬区":   { code:"13120", slug:"nerima",   label:"練馬区" },
-  "足立区":   { code:"13121", slug:"adachi",   label:"足立区" },
-  "葛飾区":   { code:"13122", slug:"katsushika",label:"葛飾区" },
-  "江戸川区": { code:"13123", slug:"edogawa", label:"江戸川区" }
-};
-window.TOKYO_WARDS = TOKYO_WARDS;
 const INDEX_CACHE = {}; // ward.code → 辞書JSON
 
-async function loadWardIndex(pref, city){
-  if (pref !== "東京都") throw new Error("東京都のみ対応の最小版です");
-  const ward = TOKYO_WARDS[city];
-  if (!ward) throw new Error(`未対応の区です: ${city}`);
-  if (INDEX_CACHE[ward.code]) return INDEX_CACHE[ward.code];
-
-  const url = `indexes/13_tokyo/${ward.code}_${ward.slug}.min.json`;
+// 一都六県対応：汎用的な辞書読み込み
+async function loadAreaIndex(prefCode, cityCode) {
+  const key = `${prefCode}_${cityCode}`;
+  if (INDEX_CACHE[key]) return INDEX_CACHE[key];
+  
+  const areas = await loadAreasData();
+  const pref = areas.prefectures.find(p => p.code === prefCode);
+  if (!pref) throw new Error(`都道府県コード ${prefCode} が見つかりません`);
+  
+  const city = pref.cities.find(c => c.code === cityCode);
+  if (!city) throw new Error(`市区町村コード ${cityCode} が見つかりません`);
+  
+  const prefSlug = getPrefSlug(prefCode);
+  
+  const url = `indexes/${prefCode}_${prefSlug}/${cityCode}_${city.slug}.min.json`;
   const res = await fetch(url, { cache: "force-cache" });
   if (!res.ok) throw new Error(`辞書ファイルが見つかりません: ${url}`);
+  
   const json = await res.json();
-  INDEX_CACHE[ward.code] = json;
+  INDEX_CACHE[key] = json;
   return json;
 }
 // 町/丁目抽出（漢数字→算用）
@@ -1589,35 +1603,50 @@ function townChomeFrom(townName){
 }
 
 // @geolonia/normalize-japanese-addresses で代表点に寄せる
-async function geocodeTokyo23(address){
+// 一都六県対応：汎用的なジオコーディング
+async function geocodeAddress(address) {
   const { normalize } = await import("https://esm.sh/@geolonia/normalize-japanese-addresses");
   const nja = await normalize(address);
-  const pref = nja.pref || "";
-  const city = nja.city || nja.county || "";
-
-  const dict = await loadWardIndex(pref, city);
-  const ward = TOKYO_WARDS[city]; // ← 追加：後続で ward.code を使うため
-
+  
+  const areas = await loadAreasData();
+  
+  // 都道府県を特定
+  const pref = areas.prefectures.find(p => p.name === nja.pref);
+  if (!pref) return { ok: false, reason: "対応エリア外の都道府県です" };
+  
+  // 市区町村を特定
+  const cityName = nja.city || nja.county || "";
+  const city = pref.cities.find(c => c.name === cityName);
+  if (!city) return { ok: false, reason: "市区町村が見つかりません" };
+  
+  // 辞書を読み込み
+  const dict = await loadAreaIndex(pref.code, city.code);
+  
+  // 町・丁目を解析
   const { town, chome } = townChomeFrom(nja.town);
   const data = dict.data || {};
-  const hit = data[`${town}|${chome ?? "-"}`] || data[`${town}|-|`] || data[`__CITY__|-|-`];
-  if (!hit) return { ok:false, reason:"辞書に該当なし" };
-
-  const wardCode = ward?.code || "";
-   const anchorKey = `${town}|${chome ?? "-"}`;
-   return {
-     ok: true,
-     lat: hit.lat, lng: hit.lng, level: hit.level,
-     label: (nja.town||"") + (chome ? `${chome}丁目` : ""),
-     anchorKey,                      // 例: "銀座|1"
-     wardCode,                       // 例: "13102"
-     anchor: `${wardCode}|${anchorKey}` // 例: "13102|銀座|1"
-   };
+  const hit = data[`${town}|${chome ?? "-"}`] 
+    || data[`${town}|-|`] 
+    || data[`__CITY__|-|-`];
+    
+  if (!hit) return { ok: false, reason: "辞書に該当なし" };
+  
+  return {
+    ok: true,
+    lat: hit.lat,
+    lng: hit.lng,
+    level: hit.level,
+    label: (nja.town || "") + (chome ? `${chome}丁目` : ""),
+    prefCode: pref.code,
+    cityCode: city.code,
+    prefName: pref.name,
+    cityName: city.name
+  };
 }
 
 async function geocodeAndClassify(address) {
   try {
-    const result = await geocodeTokyo23(address);
+    const result = await geocodeAddress(address);
     
     if (!result.ok) {
       return { 
@@ -1778,33 +1807,30 @@ function openAddressEditModal(currentAddress, onComplete) {
     suggestBox.innerHTML = '';
     if (!q) { suggestBox.style.display = 'none'; return; }
     
-    const wardHits = [];
-    if (q === '東') {
-      wardHits.push(...Object.keys(TOKYO_WARDS).map(w => `東京都${w}`));
-    } else if (q === '東京' || q === '東京都' || '東京都'.startsWith(q) || q.startsWith('東京都')) {
-      const suffix = q.replace(/^東京都?/, '');
-      wardHits.push(...Object.keys(TOKYO_WARDS).filter(w => !suffix || w.startsWith(suffix)).map(w => `東京都${w}`));
-    } else {
-      wardHits.push(...Object.keys(TOKYO_WARDS).filter(w => w.startsWith(q)).map(w => `東京都${w}`));
+    const areas = await loadAreasData();
+let finalList = [];
+
+// 都道府県候補
+for (const pref of areas.prefectures) {
+  if (pref.name.startsWith(q) || q === pref.name.substring(0, q.length)) {
+    // 都道府県名そのものを候補に
+    if (!q || pref.name.startsWith(q)) {
+      finalList.push(pref.name);
     }
     
-    // 区が確定していれば町・丁目候補
-    const m = q.replace(/\s+/g, '').match(/^東京都?([^ ]+?区)(.*)$/);
-    let finalList = wardHits;
-    if (m) {
-      const wardName = m[1];
-      const after = m[2] || '';
-      if (TOKYO_WARDS[wardName]) {
-        const cand = await getTownChomeList(wardName);
-        const qTown = after;
-        const starts = cand.filter(c => c.label.startsWith(qTown));
-        const parts = cand.filter(c => !c.label.startsWith(qTown) && c.label.includes(qTown));
-        const towns = starts.concat(parts).slice(0, 12);
-        if (towns.length) {
-          finalList = towns.map(c => `東京都${wardName}${c.label}`);
-        }
-      }
+    // 市区町村候補（都道府県名が入力されている場合）
+    if (q.startsWith(pref.name)) {
+      const suffix = q.replace(pref.name, "");
+      const cities = pref.cities.filter(c => 
+        !suffix || c.name.startsWith(suffix)
+      );
+      finalList.push(...cities.slice(0, 20).map(c => `${pref.name}${c.name}`));
     }
+  }
+}
+
+// 候補が多すぎる場合は上位20件に絞る
+finalList = finalList.slice(0, 20);
     
     if (!finalList.length) { suggestBox.style.display = 'none'; return; }
     
@@ -2045,15 +2071,21 @@ function syncFilterButtons() {
 // 予測変換IIFEの先頭あたりに追記
 const wardDictCache = new Map(); // wardCode -> dict JSON
 
-async function getTownChomeList(wardName){
-  const ward = TOKYO_WARDS[wardName];
-  if (!ward) return [];
-  if (!wardDictCache.has(ward.code)) {
-    const dict = await loadWardIndex("東京都", wardName); // 既存関数
-    wardDictCache.set(ward.code, dict);
+async function getTownChomeList(prefName, cityName) {
+  const areas = await loadAreasData();
+  const pref = areas.prefectures.find(p => p.name === prefName);
+  if (!pref) return [];
+  
+  const city = pref.cities.find(c => c.name === cityName);
+  if (!city) return [];
+  
+  const key = `${pref.code}_${city.code}`;
+  if (!wardDictCache.has(key)) {
+    const dict = await loadAreaIndex(pref.code, city.code);
+    wardDictCache.set(key, dict);
   }
-  const data = wardDictCache.get(ward.code)?.data || {};
-  // "町|丁目" / "町|-" を表示用ラベルに変換
+  
+  const data = wardDictCache.get(key)?.data || {};
   return Object.keys(data)
     .filter(k => k !== "__CITY__|-|-")
     .map(k => {
@@ -2061,8 +2093,10 @@ async function getTownChomeList(wardName){
       return {
         label: `${town}${(chome && chome !== "-") ? `${chome}丁目` : ""}`,
         anchorKey: k,
-        wardCode: ward.code,
-        wardName: wardName
+        prefCode: pref.code,
+        cityCode: city.code,
+        prefName: prefName,
+        cityName: cityName
       };
     });
 }
@@ -2070,8 +2104,8 @@ async function getTownChomeList(wardName){
 // ── 区名の予測変換（東京都を最優先で候補に出す） ─────────────────────
 document.addEventListener("DOMContentLoaded", () => {
   const input = document.getElementById("searchInput");
-  const bar   = document.querySelector(".search-bar");
-  if (!input || !bar || !window.TOKYO_WARDS) return;
+  const bar = document.querySelector(".search-bar");
+  if (!input || !bar) return;
 
   const box = document.createElement("ul");
   Object.assign(box.style, {
@@ -2094,91 +2128,74 @@ document.addEventListener("DOMContentLoaded", () => {
   box.style.display = "none";
   bar.appendChild(box);
 
-  const PREF = "東京都";
-  const WARDS = Object.keys(TOKYO_WARDS); // ["千代田区","中央区",...]
-
-  let cur = -1;
- 
-  // ===============================================
-  // 🚨 修正点 1: サジェスト生成ロジックを関数として独立させる
-  // ===============================================
-
-  /**
-   * 検索入力値に基づいてサジェスト候補を更新するメインロジック。
-   * 入力時、またはサジェスト項目クリック時に直接呼び出される。
-   */
   async function updateSuggestions() {
-    const q = input.value.trim();
-    box.innerHTML = "";
-    if (!q) { box.style.display = "none"; return; }
+  const q = input.value.trim();
+  box.innerHTML = "";
+  if (!q) { box.style.display = "none"; return; }
 
-    // (ここから、元々 input.addEventListener("input", ...) の中にあったロジックを貼り付け)
+  const areas = await loadAreasData();
+  let finalList = [];
 
-    // まずは既存どおり：東京都/区の候補
-    const wardHits = [];
-    if (q === "東") {
-      wardHits.push(...Object.keys(TOKYO_WARDS).map(w => `東京都${w}`));
-    } else if (q === "東京" || q === "東京都" || "東京都".startsWith(q) || q.startsWith("東京都")) {
-      const suffix = q.replace(/^東京都?/, "");
-      wardHits.push(...Object.keys(TOKYO_WARDS).filter(w => !suffix || w.startsWith(suffix)).map(w => `東京都${w}`));
-    } else {
-      wardHits.push(...Object.keys(TOKYO_WARDS).filter(w => w.startsWith(q)).map(w => `東京都${w}`));
+  // 都道府県・市区町村候補（部分一致）
+  for (const pref of areas.prefectures) {
+    if (pref.name.includes(q) || q.includes(pref.name.substring(0, 1))) {
+      if (pref.name.startsWith(q)) {
+        finalList.push(pref.name);
+      }
+      
+      if (q.startsWith(pref.name)) {
+        const suffix = q.replace(pref.name, "");
+        const cities = pref.cities
+          .filter(c => !suffix || c.name.includes(suffix))  // 前方一致 → 部分一致
+          .slice(0, 50)  // 20 → 50
+          .map(c => `${pref.name}${c.name}`);
+        finalList.push(...cities);
+      }
     }
+  }
 
-    // ここから拡張：区が確定していれば町・丁目候補に切り替え
-    const m = q.replace(/\s+/g, "").match(/^東京都?([^ ]+?区)(.*)$/);
-    let finalList = wardHits; // デフォルトは従来の区候補
-    if (m) {
-      const wardName = m[1];
-      const after = (m[2] || "");
-      if (TOKYO_WARDS[wardName]) {
-        const cand = await getTownChomeList(wardName);
-        const qTown = after;
-        const starts = cand.filter(c => c.label.startsWith(qTown));
-        const parts  = cand.filter(c => !c.label.startsWith(qTown) && c.label.includes(qTown));
-        const towns  = starts.concat(parts).slice(0, 12);
-        if (towns.length) {
-          // 町・丁目候補が見つかったら、最終候補リストを上書き
-          finalList = towns.map(c => `東京都${wardName}${c.label}`);
+  // 町・丁目候補（部分一致）
+  for (const pref of areas.prefectures) {
+    if (q.startsWith(pref.name)) {
+      for (const city of pref.cities) {
+        const fullCity = `${pref.name}${city.name}`;
+        if (q.startsWith(fullCity)) {
+          const suffix = q.replace(fullCity, "");
+          const towns = await getTownChomeList(pref.name, city.name);
+          const filtered = towns
+            .filter(t => !suffix || t.label.includes(suffix))  // 前方一致 → 部分一致
+            .slice(0, 50)  // 15 → 50
+            .map(t => `${fullCity}${t.label}`);
+          finalList.push(...filtered);
+          break;
         }
       }
     }
+  }
 
-    if (!finalList.length) { box.style.display = "none"; return; }
+  finalList = finalList.slice(0, 50);  // 20 → 50
 
-    finalList.forEach(h => {
-      const li = document.createElement("li");
-      li.textContent = h;
-      li.style.padding = "4px 8px";
-      li.style.cursor = "pointer";
-      
-      // ===============================================
-      // 🚨 修正点 2: li.click から dispatchEvent を削除し、関数を直接呼び出す
-      // ===============================================
-li.addEventListener("click", () => {
-  const picked = h.trim();
-  input.value = picked;
-  input.focus(); // キーボード維持
+  if (!finalList.length) { box.style.display = "none"; return; }
 
-  // 🚨 修正点：updateSuggestions() の呼び出しを setTimeout でラップし、
-  // ブラウザのイベントキューの末尾で実行させることで、非同期処理の衝突を防ぐ。
-  setTimeout(() => {
-    updateSuggestions(); 
-  }, 0); 
-
-  // カーソルを末尾に
-  const end = input.value.length;
-  try { input.setSelectionRange(end, end); } catch (_) {}
-});
-
-      box.appendChild(li);
+  finalList.forEach(h => {
+    const li = document.createElement("li");
+    li.textContent = h;
+    li.style.padding = "4px 8px";
+    li.style.cursor = "pointer";
+    
+    li.addEventListener("click", () => {
+      input.value = h.trim();
+      input.focus();
+      setTimeout(() => updateSuggestions(), 0);
+      const end = input.value.length;
+      try { input.setSelectionRange(end, end); } catch (_) {}
     });
-    box.style.display = "block";
-  }; // updateSuggestions 関数の終わり
 
-  // ===============================================
-  // 🚨 修正点 3: input イベントリスナーは関数を呼び出すだけにする
-  // ===============================================
+    box.appendChild(li);
+  });
+  box.style.display = "block";
+}
+
   input.addEventListener("input", updateSuggestions);
 
   document.addEventListener("click", (e) => {
