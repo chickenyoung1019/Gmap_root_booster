@@ -498,8 +498,8 @@ function wirePopup(marker, info) {
           
           return;
         }
-
-// 種類別に反映
+        
+        // 種類別に反映
         if (info.kind === 'search') {
           // 検索ピンを更新（検索窓と同じ: ズーム+ポップアップ表示）
           setSearchPin(result.lat, result.lng, result.label, result.status);
@@ -715,11 +715,11 @@ function optimizeRoute(){
   }
 
   renderMarkers(); renderList(); 
-  showAllPins(); // 全ピン表示（パック赤枠なし）
   
-  // パック状態をリセット
+  // パック状態をリセットして最初の10件を表示
   packIndex = 0;
-  hasShownPack = false;
+  hasShownPack = true;
+  applyHighlight(); // 即座に赤枠表示
 }
 
 /* =========================
@@ -1015,7 +1015,7 @@ div.addEventListener('dragover', e=>{ if(p.locked){ return; } e.preventDefault()
       focusOnPoint(p.lat, p.lng, marker);
     };
 
-// --- フィルターON中は DnD 停止、OFFの時だけ DnD を有効化 ---
+    // --- フィルターON中は DnD 停止、OFFの時だけ DnD を有効化 ---
 const DND_ENABLED = !isFilterOn();
 
 if (!DND_ENABLED) {
