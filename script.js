@@ -1,6 +1,10 @@
 /* =========================
    グローバル設定とユーティリティ
    ========================= */
+   
+   // 全辞書キャッシュ（バックグラウンドロード用）
+let TOWN_CACHE = null;
+let CACHE_LOADING = false;
 
 /* =========================
    一都六県対応：エリアデータ読み込み
@@ -505,7 +509,7 @@ function wirePopup(marker, info) {
           
           if (!ok) return;
           
-          // 座標なしで更新（種類別）
+                    // 座標なしで更新（種類別）
           if (info.kind === 'search') {
             // 検索ピンは座標なしでは表示できないので削除
             alert('検索ピンは座標が必要なため更新できません。');
@@ -1016,7 +1020,7 @@ if (content) {
 }
 
     // ロック表示初期化
-const lockBtn = div.querySelector('.lock-btn');
+    const lockBtn = div.querySelector('.lock-btn');
 const setLockUI = ()=>{
   lockBtn.textContent = p.locked ? '🔒' : '🔓';
   div.style.opacity = p.locked ? '.8' : '1';
@@ -1162,17 +1166,35 @@ function openPointInGoogleMaps(label) {
   openInGoogleMapsAddress(label, { normalize: false });
 }
 
+// 建物名除去（シンプル版）
+function stripBuilding(addr) {
+  // 番地の後ろにスペース+建物名がある想定
+  return addr
+    .replace(/(\d+-\d+|\d+丁目\d+-\d+)\s+.+$/, '$1')  // 番地以降を全削除
+    .trim();
+}
+
 function openPack(){
   const beginIdx = packIndex * packSize;
   const pts = route.slice(beginIdx, beginIdx + 10);
 
   if (!pts.length) return;
 
-  const toParam = (pt) => pointToMapsParam(pt, { normalize: true });
+  const toParam = (pt) => {
+    const raw = pointToMapsParam(pt, { normalize: true });
+    const stripped = stripBuilding(raw);
+    console.log(`[openPack] 元: "${raw}" → 除去後: "${stripped}"`);
+    return stripped;
+  };
 
   const origin = (packIndex === 0 && startPoint) ? toParam(startPoint) : (packIndex > 0 ? toParam(route[beginIdx - 1]) : undefined);
   const destination = (beginIdx + 10 >= route.length && goalPoint) ? toParam(goalPoint) : toParam(pts[pts.length - 1]);
   const waypoints = pts.map(toParam).join('|');
+
+  console.log('--- Googleマップへ送信 ---');
+  console.log('origin:', origin);
+  console.log('destination:', destination);
+  console.log('waypoints:', waypoints);
 
   const url = `https://www.google.com/maps/dir/?api=1`
     + (origin ? `&origin=${encodeURIComponent(origin)}` : '')
@@ -1446,8 +1468,8 @@ async function extractEntries(text) {
   
   const lines = (text || '')
     .split(/\r?\n/)
-    .map(line => normalizeAddressInput(line))
-    .filter(line => line && line.length > 3); // 短すぎる行は除外
+    .map(line => line.replace(/^〒?\d{3}-?\d{4}\s*/, '').trim())  // 行頭の郵便番号だけ削除
+    .filter(line => line && line.length > 3);
   
   const entries = [];
   let i = 0;
@@ -1458,42 +1480,43 @@ async function extractEntries(text) {
     try {
       const nja = await normalize(line);
       
-      // 住所判定：city（区）があればOK
       if (nja.city) {
         let addr1 = line;
         const buildingParts = [];
         let consumed = 0;
         
-        // 次の1〜4行をスキャン
         for (let j = 1; j <= 4 && i + j < lines.length; j++) {
           const next = lines[i + j];
           
-          // スキップ条件：郵便番号・配達指示・宛名・電話など
-          if (/^〒|^配達|^到着|^注文|^TEL|^電話|^メモ|^スキャン|様$|御中$|殿$/.test(next)) {
+          // 郵便番号単独行はスキップ
+          if (/^〒?\d{3}-?\d{4}$/.test(next)) {
             break;
           }
           
-          // 次の住所が来たら終了
+          if (/^配達|^到着|^注文|^TEL|^電話|^メモ|^スキャン|様$|御中$|殿$/.test(next)) {
+            break;
+          }
+          
+          // 次の住所チェック
           try {
             const nextNja = await normalize(next);
-            if (nextNja.city) break; // 区が出たら次の住所
+            if (nextNja.city) break;
           } catch(_) {}
           
-          // 番地の続き（2-8-12 など）
+          // 番地の続き
           if (/^\d{1,3}-\d/.test(next)) {
             addr1 += ` ${next}`;
             consumed = j;
             continue;
           }
           
-          // 建物名・部屋番号
+          // 建物名
           if (isBuildingOrRoomLine(next)) {
             buildingParts.push(next);
             consumed = j;
           }
         }
         
-        // 建物情報を結合
         const addr2 = buildingParts.join(' ');
         entries.push({ addr1, addr2 });
         
@@ -1509,29 +1532,7 @@ async function extractEntries(text) {
     }
   }
   
-  // 同じテキスト内での重複をチェック
-  const seen = new Map();
-  const duplicates = [];
-  
-  for (const entry of entries) {
-    const key = `${entry.addr1}|${entry.addr2 || ''}`;
-    if (seen.has(key)) {
-      duplicates.push(entry.addr1 + (entry.addr2 ? ` ${entry.addr2}` : ''));
-    } else {
-      seen.set(key, true);
-    }
-  }
-  
-  // 重複があれば通知
-  if (duplicates.length > 0) {
-    alert(
-      `以下の${duplicates.length}件は同じテキスト内で重複しています：\n\n` +
-      duplicates.join('\n') +
-      `\n\n不要な場合はチェックを外してください。`
-    );
-  }
-  
-  // 重複も含めてすべて返す（ユーザーが判断）
+  // 重複チェック（省略）
   return entries;
 }
 
@@ -2101,6 +2102,38 @@ async function getTownChomeList(prefName, cityName) {
     });
 }
 
+// 全辞書をバックグラウンドで事前ロード
+async function preloadAllTowns() {
+  if (TOWN_CACHE || CACHE_LOADING) return;
+  CACHE_LOADING = true;
+  
+  console.log('辞書を読み込み中...');
+  const cache = [];
+  const areas = await loadAreasData();
+  
+  for (const pref of areas.prefectures) {
+    for (const city of pref.cities) {
+      try {
+        const towns = await getTownChomeList(pref.name, city.name);
+        towns.forEach(town => {
+          cache.push({
+            full: `${pref.name}${city.name}${town.label}`,
+            pref: pref.name,
+            city: city.name,
+            town: town.label
+          });
+        });
+      } catch(e) {
+        continue;
+      }
+    }
+  }
+  
+  TOWN_CACHE = cache;
+  CACHE_LOADING = false;
+  console.log(`辞書読み込み完了: ${cache.length}件`);
+}
+
 // ── 区名の予測変換（東京都を最優先で候補に出す） ─────────────────────
 document.addEventListener("DOMContentLoaded", () => {
   const input = document.getElementById("searchInput");
@@ -2131,52 +2164,59 @@ document.addEventListener("DOMContentLoaded", () => {
   async function updateSuggestions() {
   const q = input.value.trim();
   box.innerHTML = "";
-  if (!q) { box.style.display = "none"; return; }
+  if (!q || q.length < 2) { box.style.display = "none"; return; }
 
   const areas = await loadAreasData();
   let finalList = [];
 
-  // 都道府県・市区町村候補（部分一致）
-  for (const pref of areas.prefectures) {
-    if (pref.name.includes(q) || q.includes(pref.name.substring(0, 1))) {
-      if (pref.name.startsWith(q)) {
-        finalList.push(pref.name);
-      }
-      
-      if (q.startsWith(pref.name)) {
-        const suffix = q.replace(pref.name, "");
-        const cities = pref.cities
-          .filter(c => !suffix || c.name.includes(suffix))  // 前方一致 → 部分一致
-          .slice(0, 50)  // 20 → 50
-          .map(c => `${pref.name}${c.name}`);
-        finalList.push(...cities);
-      }
-    }
-  }
+  // キャッシュがあれば高速検索
+  if (TOWN_CACHE) {
+    finalList = TOWN_CACHE
+      .filter(item => item.full.includes(q))
+      .map(item => item.full)
+      .slice(0, 50);
+  } else {
+    // キャッシュなし: プログレス表示 + 従来の検索
+    box.innerHTML = '<li style="padding:8px;color:#666;text-align:center;">読み込み中…</li>';
+    box.style.display = "block";
 
-  // 町・丁目候補（部分一致）
-  for (const pref of areas.prefectures) {
-    if (q.startsWith(pref.name)) {
+    // 都道府県・市区町村
+    for (const pref of areas.prefectures) {
+      if (pref.name.includes(q)) finalList.push(pref.name);
       for (const city of pref.cities) {
-        const fullCity = `${pref.name}${city.name}`;
-        if (q.startsWith(fullCity)) {
-          const suffix = q.replace(fullCity, "");
-          const towns = await getTownChomeList(pref.name, city.name);
-          const filtered = towns
-            .filter(t => !suffix || t.label.includes(suffix))  // 前方一致 → 部分一致
-            .slice(0, 50)  // 15 → 50
-            .map(t => `${fullCity}${t.label}`);
-          finalList.push(...filtered);
-          break;
+        if (city.name.includes(q) || `${pref.name}${city.name}`.includes(q)) {
+          finalList.push(`${pref.name}${city.name}`);
         }
       }
     }
+
+    // 町名検索（軽量）
+    for (const pref of areas.prefectures) {
+      for (const city of pref.cities) {
+        try {
+          const towns = await getTownChomeList(pref.name, city.name);
+          for (const town of towns) {
+            if (town.label.includes(q)) {
+              finalList.push(`${pref.name}${city.name}${town.label}`);
+              if (finalList.length === 1) box.innerHTML = "";
+              if (finalList.length >= 50) break;
+            }
+          }
+          if (finalList.length >= 50) break;
+        } catch(e) { continue; }
+      }
+      if (finalList.length >= 50) break;
+    }
   }
 
-  finalList = finalList.slice(0, 50);  // 20 → 50
+  finalList = finalList.slice(0, 50);
 
-  if (!finalList.length) { box.style.display = "none"; return; }
+  if (!finalList.length) { 
+    box.innerHTML = '<li style="padding:8px;color:#999;">候補なし</li>';
+    return;
+  }
 
+  box.innerHTML = "";
   finalList.forEach(h => {
     const li = document.createElement("li");
     li.textContent = h;
@@ -2201,6 +2241,9 @@ document.addEventListener("DOMContentLoaded", () => {
   document.addEventListener("click", (e) => {
     if (!bar.contains(e.target)) box.style.display = "none";
   });
+  
+  // ★初回バックグラウンドロード
+  setTimeout(() => preloadAllTowns(), 1000);
 });
 
 /* =========================
