@@ -1804,63 +1804,81 @@ function openAddressEditModal(currentAddress, onComplete) {
   
   // サジェスト更新関数（検索窓と同じロジック）
   async function updateModalSuggestions() {
-    const q = input.value.trim();
-    suggestBox.innerHTML = '';
-    if (!q) { suggestBox.style.display = 'none'; return; }
-    
-    const areas = await loadAreasData();
-let finalList = [];
+  const q = input.value.trim();
+  suggestBox.innerHTML = '';
+  if (!q || q.length < 2) { suggestBox.style.display = 'none'; return; }
 
-// 都道府県候補
-for (const pref of areas.prefectures) {
-  if (pref.name.startsWith(q) || q === pref.name.substring(0, q.length)) {
-    // 都道府県名そのものを候補に
-    if (!q || pref.name.startsWith(q)) {
-      finalList.push(pref.name);
-    }
-    
-    // 市区町村候補（都道府県名が入力されている場合）
-    if (q.startsWith(pref.name)) {
-      const suffix = q.replace(pref.name, "");
-      const cities = pref.cities.filter(c => 
-        !suffix || c.name.startsWith(suffix)
-      );
-      finalList.push(...cities.slice(0, 20).map(c => `${pref.name}${c.name}`));
-    }
-  }
-}
+  const areas = await loadAreasData();
+  let finalList = [];
 
-// 候補が多すぎる場合は上位20件に絞る
-finalList = finalList.slice(0, 20);
-    
-    if (!finalList.length) { suggestBox.style.display = 'none'; return; }
-    
-    finalList.forEach(h => {
-      const li = document.createElement('li');
-      li.textContent = h;
-      li.style.padding = '6px 8px';
-      li.style.cursor = 'pointer';
-      li.style.borderRadius = '0.25rem';
-      
-      li.addEventListener('mouseenter', () => {
-        li.style.background = '#f3f4f6';
-      });
-      li.addEventListener('mouseleave', () => {
-        li.style.background = '';
-      });
-      
-      li.addEventListener('click', () => {
-        input.value = h.trim();
-        input.focus();
-        setTimeout(() => updateModalSuggestions(), 0);
-        const end = input.value.length;
-        try { input.setSelectionRange(end, end); } catch(_) {}
-      });
-      
-      suggestBox.appendChild(li);
-    });
+  // キャッシュがあれば高速検索
+  if (TOWN_CACHE) {
+    finalList = TOWN_CACHE
+      .filter(item => item.full.includes(q))
+      .map(item => item.full)
+      .slice(0, 50);
+  } else {
+    // キャッシュなし: プログレス + 従来検索
+    suggestBox.innerHTML = '<li style="padding:8px;color:#666;text-align:center;">読み込み中…</li>';
     suggestBox.style.display = 'block';
+
+    for (const pref of areas.prefectures) {
+      if (pref.name.includes(q)) finalList.push(pref.name);
+      for (const city of pref.cities) {
+        if (city.name.includes(q) || `${pref.name}${city.name}`.includes(q)) {
+          finalList.push(`${pref.name}${city.name}`);
+        }
+      }
+    }
+
+    for (const pref of areas.prefectures) {
+      for (const city of pref.cities) {
+        try {
+          const towns = await getTownChomeList(pref.name, city.name);
+          for (const town of towns) {
+            if (town.label.includes(q)) {
+              finalList.push(`${pref.name}${city.name}${town.label}`);
+              if (finalList.length === 1) suggestBox.innerHTML = '';
+              if (finalList.length >= 50) break;
+            }
+          }
+          if (finalList.length >= 50) break;
+        } catch(e) { continue; }
+      }
+      if (finalList.length >= 50) break;
+    }
   }
+
+  finalList = finalList.slice(0, 50);
+
+  if (!finalList.length) { 
+    suggestBox.innerHTML = '<li style="padding:8px;color:#999;">候補なし</li>';
+    return;
+  }
+
+  suggestBox.innerHTML = '';
+  finalList.forEach(h => {
+    const li = document.createElement('li');
+    li.textContent = h;
+    li.style.padding = '6px 8px';
+    li.style.cursor = 'pointer';
+    li.style.borderRadius = '0.25rem';
+    
+    li.addEventListener('mouseenter', () => li.style.background = '#f3f4f6');
+    li.addEventListener('mouseleave', () => li.style.background = '');
+    
+    li.addEventListener('click', () => {
+      input.value = h.trim();
+      input.focus();
+      setTimeout(() => updateModalSuggestions(), 0);
+      const end = input.value.length;
+      try { input.setSelectionRange(end, end); } catch(_) {}
+    });
+    
+    suggestBox.appendChild(li);
+  });
+  suggestBox.style.display = 'block';
+}
   
   input.addEventListener('input', updateModalSuggestions);
   
