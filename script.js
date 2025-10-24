@@ -225,6 +225,10 @@ function guardFilter(actionName) {
   // 反映：描画は“表示制御のみ”
   renderMarkers();
   renderList();
+// フィルターON時は該当ピンを全表示
+  if (isFilterOn()) {
+    showAllPins();  //
+  }
   applyHighlight(); // フィルターON中は中でno-op化
 }
 
