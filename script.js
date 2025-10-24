@@ -593,6 +593,7 @@ if (info?.kind === 'route') {
     if (p) p.tw = tw || null;
     renderMarkers();
     renderList();
+    applyHighlight();
     marker.closePopup();
   }, 'popup');
   
@@ -958,6 +959,7 @@ if (content) {
     p.tw = tw || null;
     renderMarkers();
     renderList();
+    applyHighlight();
   });
   
   // Gマップ + 編集 + 時間帯ボタン
