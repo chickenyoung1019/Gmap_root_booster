@@ -649,7 +649,7 @@ function addVia(lat, lng, label, status = 'SUCCESS') {
     status: status
   });
 
-  renderMarkers(); renderList();
+  renderMarkers(); renderList();applyHighlight();
   
   // 座標がある場合のみフォーカス
   if (lat !== null && lng !== null) {
@@ -753,7 +753,6 @@ function optimizeRoute(){
   
   // パック状態をリセットして最初の10件を表示
   packIndex = 0;
-  hasShownPack = true;
   applyHighlight(); // 即座に赤枠表示
 }
 
@@ -1123,7 +1122,6 @@ if (!DND_ENABLED) {
    ========================= */
 
 let packIndex=0; const packSize=10;
-let hasShownPack = false; // パック表示フラグ
 
 function applyHighlight(){
  if (isFilterOn()) return; // ← 追加：フィルター中はパック強調を無効化（安全最小） // 見た目の強調
@@ -1203,7 +1201,9 @@ function openPack(){
     + `&travelmode=driving`;
 
   window.open(url, "_blank");
-  packIndex++; applyHighlight();
+  packIndex++;
+  if (packIndex * packSize >= route.length) packIndex = 0;  // ← 追加
+  applyHighlight();
 }
 
 /* =========================
@@ -1431,6 +1431,7 @@ addBtn?.addEventListener('click', () => {
   // UI更新
   renderMarkers();
   renderList();
+  applyHighlight();
   
   // 全ピンを表示
   showAllPins();
@@ -1468,7 +1469,8 @@ async function extractEntries(text) {
   
   const lines = (text || '')
     .split(/\r?\n/)
-    .map(line => line.replace(/^〒?\d{3}-?\d{4}\s*/, '').trim())  // 行頭の郵便番号だけ削除
+    .map(line => line.replace(/^〒?\d{3}-?\d{4}\s*/, ''))  // 郵便番号だけ削除
+    .map(line => normalizeAddressInput(line))              // 既存の正規化を適用
     .filter(line => line && line.length > 3);
   
   const entries = [];
@@ -1488,16 +1490,12 @@ async function extractEntries(text) {
         for (let j = 1; j <= 4 && i + j < lines.length; j++) {
           const next = lines[i + j];
           
-          // 郵便番号単独行はスキップ
-          if (/^〒?\d{3}-?\d{4}$/.test(next)) {
+          // スキップ条件（旧版）
+          if (/^〒|^配達|^到着|^注文|^TEL|^電話|^メモ|^スキャン|様$|御中$|殿$/.test(next)) {
             break;
           }
           
-          if (/^配達|^到着|^注文|^TEL|^電話|^メモ|^スキャン|様$|御中$|殿$/.test(next)) {
-            break;
-          }
-          
-          // 次の住所チェック
+          // 次の住所が来たら終了
           try {
             const nextNja = await normalize(next);
             if (nextNja.city) break;
@@ -1510,7 +1508,7 @@ async function extractEntries(text) {
             continue;
           }
           
-          // 建物名
+          // 建物名・部屋番号
           if (isBuildingOrRoomLine(next)) {
             buildingParts.push(next);
             consumed = j;
@@ -1532,7 +1530,27 @@ async function extractEntries(text) {
     }
   }
   
-  // 重複チェック（省略）
+  // 重複チェック（同じ）
+  const seen = new Map();
+  const duplicates = [];
+  
+  for (const entry of entries) {
+    const key = `${entry.addr1}|${entry.addr2 || ''}`;
+    if (seen.has(key)) {
+      duplicates.push(entry.addr1 + (entry.addr2 ? ` ${entry.addr2}` : ''));
+    } else {
+      seen.set(key, true);
+    }
+  }
+  
+  if (duplicates.length > 0) {
+    alert(
+      `以下の${duplicates.length}件は同じテキスト内で重複しています：\n\n` +
+      duplicates.join('\n') +
+      `\n\n不要な場合はチェックを外してください。`
+    );
+  }
+  
   return entries;
 }
 
@@ -1890,9 +1908,12 @@ function openAddressEditModal(currentAddress, onComplete) {
   });
   
   // 入力欄にフォーカス
-  setTimeout(() => {
-    modal.querySelector('.modal-input').focus();
-  }, 100);
+setTimeout(() => {
+  const input = modal.querySelector('.modal-input');
+  input.focus();
+  const len = input.value.length;
+  input.setSelectionRange(len, len);  // カーソルを末尾に
+}, 100);
 }
 
 // 検索結果ピン（ポップアップ含む・ステータス対応）
@@ -2018,13 +2039,8 @@ document.getElementById('openPack').onclick = () => {
 document.getElementById('nextPack').onclick = () => {
   if (!guardFilter('次の10件')) return;
   
-  // 初回は0からスタート、2回目以降は+1
-  if (packIndex === 0 && !hasShownPack) {
-    hasShownPack = true;
-  } else {
-    packIndex++;
-    if (packIndex * packSize >= route.length) packIndex = 0;
-  }
+  packIndex++;  // ← hasShownPackの条件分岐を削除
+  if (packIndex * packSize >= route.length) packIndex = 0;
   
   applyHighlight();
 };
