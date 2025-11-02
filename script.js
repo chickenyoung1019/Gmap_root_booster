@@ -209,13 +209,7 @@ function normalizeAddressInput(input) {
 
 /* ===== 時間帯フィルター切り替え ===== */
 function setTwFilter(twLabel) {
-	// フィルター中の操作を制御する関数（統一版）
-function guardFilter(actionName) {
-  if (!isFilterOn()) return true; // フィルターOFF = 実行OK
-  
-  alert(`時間帯フィルター中は${actionName}できません。\nフィルターを解除してから実行してください。`);
-  return false; // フィルターON = 実行NG
-}
+	
   // 同じボタンをもう一度押したら解除（ON/OFFトグル）
   currentTwFilter = (currentTwFilter === twLabel) ? null : twLabel;
 
@@ -2147,7 +2141,6 @@ async function preloadAllTowns() {
   if (TOWN_CACHE || CACHE_LOADING) return;
   CACHE_LOADING = true;
   
-  console.log('辞書を読み込み中...');
   const cache = [];
   const areas = await loadAreasData();
   
@@ -2171,7 +2164,6 @@ async function preloadAllTowns() {
   
   TOWN_CACHE = cache;
   CACHE_LOADING = false;
-  console.log(`辞書読み込み完了: ${cache.length}件`);
 }
 
 // ── 区名の予測変換（東京都を最優先で候補に出す） ─────────────────────
