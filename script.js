@@ -2281,11 +2281,6 @@ document.addEventListener("DOMContentLoaded", () => {
 /* =========================
    互換用（window公開）
    ========================= */
-
-window.__setSearchResult = (lat,lng,label)=>setSearchPin(lat,lng,label);
-
-window.__fallbackSearch = (q)=>alert("住所正規化モジュールの読み込みに失敗しました。ネット接続 or ローカルサーバーでお試しください。");
-
 // 一括プレビュー：全選択/全解除
 document.getElementById('bulkSelectAll')?.addEventListener('click', () => {
   document.querySelectorAll('.bulk-checkbox').forEach(cb => cb.checked = true);
