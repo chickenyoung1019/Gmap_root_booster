@@ -2281,15 +2281,6 @@ document.addEventListener("DOMContentLoaded", () => {
 /* =========================
    互換用（window公開）
    ========================= */
-// 一括プレビュー：全選択/全解除
-document.getElementById('bulkSelectAll')?.addEventListener('click', () => {
-  document.querySelectorAll('.bulk-checkbox').forEach(cb => cb.checked = true);
-});
-
-document.getElementById('bulkDeselectAll')?.addEventListener('click', () => {
-  document.querySelectorAll('.bulk-checkbox').forEach(cb => cb.checked = false);
-});
-
 // 一括プレビュー：チェック削除
 document.getElementById('bulkDelete')?.addEventListener('click', () => {
   const checkedIndexes = Array.from(document.querySelectorAll('.bulk-checkbox:checked'))
