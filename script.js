@@ -1037,12 +1037,6 @@ delBtn.onclick = (e) => {
   if (ok) deletePoint('route', { id: p.id });
 };
 
-
-// ロック中はドラッグ系を無効化
-div.addEventListener('dragstart', e=>{ if(p.locked){ e.preventDefault(); return; } e.dataTransfer.setData('text/plain',p.id.toString()); setTimeout(()=>div.style.opacity='.5',0); });
-div.addEventListener('dragover', e=>{ if(p.locked){ return; } e.preventDefault(); div.classList.add('drag-over'); });
-
-
     // カードクリックで地図へジャンプ
     div.onclick=()=>{ 
       const marker = markers.find((m, idx) => route[idx]?.id === p.id);
