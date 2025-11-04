@@ -26,7 +26,7 @@
         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
           <path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/>
         </svg>
-        <input id="searchInput" class="search-input" placeholder="例）大田区蒲田5-13-1 / 池上三丁目（概算地点）"/>
+        <input id="searchInput" class="search-input" placeholder="この検索は町,丁目の代表点までです"/>
         <button id="searchBtn" class="header-item" style="color:#1d4ed8">検索</button>
       </div>
       <div class="btn-container">
@@ -59,7 +59,8 @@
 
       <!-- 入力エリア -->
       <div id="bulkInputArea">
-        <textarea id="bulkInput" placeholder="配送先リストをそのまま貼り付けてください
+        <textarea id="bulkInput" placeholder="配送先リストをフリーフォーマットで
+そのまま貼り付けてください
 （何件でも可能）
 
 （例）
@@ -69,7 +70,10 @@
 TEL: 03-1234-5678
 配達指示：インターホン押してください
 
-※ 住所のみ抽出されます"></textarea>
+※ 住所のみ抽出されます
+
+抽出できなかった文字列があれば
+お知らせ下さい、改善いたします"></textarea>
         <div class="row">
           <small>※ ここにコピペしたテキストから住所だけを抽出します。<br>　「住所を抽出」を押してください。</small>
         </div>
